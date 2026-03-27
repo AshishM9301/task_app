@@ -4,6 +4,8 @@ import 'package:image_picker/image_picker.dart';
 import 'dart:io';
 import 'dart:typed_data';
 import '../../../core/constants/app_constants.dart';
+import '../../../core/utils/api_utils.dart';
+import '../../../data/models/models.dart';
 import '../../widgets/custom_dropdown.dart';
 import '../../widgets/custom_input_field.dart';
 
@@ -26,11 +28,12 @@ class AddTaskScreen extends StatefulWidget {
 }
 
 class _AddTaskScreenState extends State<AddTaskScreen> {
-  int _selectedCategoryIndex = 0;
-  final List<String> _categories = ['Work', 'Personal'];
-  final List<IconData> _categoryIcons = [Icons.work, Icons.person];
+  List<TaskGroupSimple> _taskGroups = [];
+  List<Project> _projects = [];
+  int? _selectedTaskGroupId;
+  Project? _selectedProject;
+  bool _isLoading = false;
 
-  final TextEditingController _projectNameController = TextEditingController();
   final TextEditingController _taskNameController = TextEditingController();
   final TextEditingController _descriptionController = TextEditingController();
 
@@ -40,6 +43,46 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
   Uint8List? _selectedImageBytes;
 
   final ImagePicker _picker = ImagePicker();
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchData();
+  }
+
+  Future<void> _fetchData() async {
+    setState(() => _isLoading = true);
+    try {
+      final results = await Future.wait([
+        getTaskGroups(),
+        getProjects(),
+      ]);
+
+      final taskGroupResponse = results[0] as TaskGroupResponse;
+      final projectResponse = results[1] as ProjectResponse;
+
+      setState(() {
+        _taskGroups = taskGroupResponse.data;
+        _projects = projectResponse.data;
+        if (_taskGroups.isNotEmpty) {
+          _selectedTaskGroupId = _taskGroups[0].id;
+        }
+      });
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error loading data: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
 
   Future<void> _pickImage(ImageSource source) async {
     try {
@@ -197,7 +240,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
     return '${months[date.month - 1]} ${date.day}, ${date.year}';
   }
 
-  void _saveTask() {
+  void _saveTask() async {
     if (_taskNameController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -208,24 +251,81 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       return;
     }
 
-    final taskData = {
-      'category': _categories[_selectedCategoryIndex],
-      'categoryIcon': _categoryIcons[_selectedCategoryIndex],
-      'projectName': _projectNameController.text,
-      'taskName': _taskNameController.text,
-      'description': _descriptionController.text,
-      'startDate': _startDate,
-      'endDate': _endDate,
-      'image': _selectedImage,
-    };
+    if (_selectedTaskGroupId == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select a task group'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
 
-    widget.onTaskAdded?.call(taskData);
-    Navigator.of(context).pop();
+    if (_selectedProject == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select a project'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    setState(() => _isLoading = true);
+
+    try {
+      final taskGroup = _taskGroups.firstWhere((g) => g.id == _selectedTaskGroupId);
+
+      final response = await createTask(
+        taskGroupId: _selectedTaskGroupId!,
+        projectId: _selectedProject!.id,
+        projectTitle: _selectedProject!.title,
+        title: _taskNameController.text,
+        description: _descriptionController.text.isNotEmpty ? _descriptionController.text : null,
+        startedAt: _startDate?.toUtc().toIso8601String(),
+        endedAt: _endDate?.toUtc().toIso8601String(),
+        status: 'pending',
+      );
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(response.message),
+            backgroundColor: Colors.green,
+          ),
+        );
+
+        widget.onTaskAdded?.call({
+          'id': response.data.id,
+          'title': response.data.title,
+          'description': response.data.description,
+          'taskGroupTitle': taskGroup.title,
+          'projectTitle': response.data.projectTitle,
+          'startedAt': response.data.startedAt,
+          'endedAt': response.data.endedAt,
+          'status': response.data.status,
+        });
+
+        Navigator.of(context).pop();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error creating task: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
   }
 
   @override
   void dispose() {
-    _projectNameController.dispose();
     _taskNameController.dispose();
     _descriptionController.dispose();
     super.dispose();
@@ -240,127 +340,125 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
           children: [
             _buildHeader(),
             Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(AppConstants.paddingMedium),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildCategorySelection(),
-                    const SizedBox(height: 24),
-                    CustomInputField(
-                      controller: _projectNameController,
-                      label: 'Project Name',
-                      hint: 'Enter project name',
-                    ),
-                    const SizedBox(height: 16),
-                    CustomInputField(
-                      controller: _taskNameController,
-                      label: 'Task Name',
-                      hint: 'Enter task name',
-                    ),
-                    const SizedBox(height: 16),
-                    _buildDescriptionField(),
-                    const SizedBox(height: 16),
-                    _buildDatePickers(),
-                    const SizedBox(height: 16),
-                    _selectedImageBytes != null
-                        ? Padding(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 0,
-                            ),
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(
-                                  AppConstants.radiusSmall,
-                                ),
-                                border: Border.all(
-                                  color: AppConstants.secondaryColor
-                                      .withOpacity(0.2),
-                                  width: 1,
-                                ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withOpacity(0.1),
-                                    blurRadius: 8,
-                                    offset: const Offset(0, 2),
+              child: _isLoading
+                  ? const Center(child: CircularProgressIndicator())
+                  : SingleChildScrollView(
+                      padding: const EdgeInsets.all(AppConstants.paddingMedium),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildCategorySelection(),
+                          const SizedBox(height: 24),
+                          _buildProjectDropdown(),
+                          const SizedBox(height: 16),
+                          CustomInputField(
+                            controller: _taskNameController,
+                            label: 'Task Name',
+                            hint: 'Enter task name',
+                          ),
+                          const SizedBox(height: 16),
+                          _buildDescriptionField(),
+                          const SizedBox(height: 16),
+                          _buildDatePickers(),
+                          const SizedBox(height: 16),
+                          _selectedImageBytes != null
+                              ? Padding(
+                                  padding: EdgeInsets.symmetric(
+                                    horizontal: 16,
+                                    vertical: 0,
                                   ),
-                                ],
-                              ),
-                              padding: EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 12,
-                              ),
-                              child: Row(
-                                children: [
-                                  Container(
-                                    width: 80,
-                                    height: 80,
+                                  child: Container(
                                     decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(12),
+                                      color: Colors.white,
+                                      borderRadius: BorderRadius.circular(
+                                        AppConstants.radiusSmall,
+                                      ),
                                       border: Border.all(
                                         color: AppConstants.secondaryColor
                                             .withOpacity(0.2),
                                         width: 1,
                                       ),
+                                      boxShadow: [
+                                        BoxShadow(
+                                          color: Colors.black.withOpacity(0.1),
+                                          blurRadius: 8,
+                                          offset: const Offset(0, 2),
+                                        ),
+                                      ],
                                     ),
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(11),
-                                      child: Image.memory(
-                                        _selectedImageBytes!,
-                                        width: 80,
-                                        height: 80,
-                                        fit: BoxFit.cover,
-                                      ),
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: 16,
+                                      vertical: 12,
                                     ),
-                                  ),
-                                  const Spacer(),
-                                  Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      ElevatedButton.icon(
-                                        onPressed: _showImagePicker,
-                                        icon: const Icon(Icons.edit, size: 16),
-                                        label: const Text('Change Logo'),
-                                        style: ElevatedButton.styleFrom(
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(
-                                              AppConstants.radiusSmall,
+                                    child: Row(
+                                      children: [
+                                        Container(
+                                          width: 80,
+                                          height: 80,
+                                          decoration: BoxDecoration(
+                                            borderRadius: BorderRadius.circular(12),
+                                            border: Border.all(
+                                              color: AppConstants.secondaryColor
+                                                  .withOpacity(0.2),
+                                              width: 1,
                                             ),
                                           ),
-                                          backgroundColor: const Color(
-                                            0xffEDE8FF,
+                                          child: ClipRRect(
+                                            borderRadius: BorderRadius.circular(11),
+                                            child: Image.memory(
+                                              _selectedImageBytes!,
+                                              width: 80,
+                                              height: 80,
+                                              fit: BoxFit.cover,
+                                            ),
                                           ),
-                                          foregroundColor:
-                                              AppConstants.primaryColor,
                                         ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      IconButton(
-                                        onPressed: () {
-                                          setState(() {
-                                            _selectedImage = null;
-                                            _selectedImageBytes = null;
-                                          });
-                                        },
-                                        icon: const Icon(Icons.delete_outline),
-                                        color: Colors.red,
-                                        tooltip: 'Delete image',
-                                      ),
-                                    ],
+                                        const Spacer(),
+                                        Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            ElevatedButton.icon(
+                                              onPressed: _showImagePicker,
+                                              icon: const Icon(Icons.edit, size: 16),
+                                              label: const Text('Change Logo'),
+                                              style: ElevatedButton.styleFrom(
+                                                shape: RoundedRectangleBorder(
+                                                  borderRadius: BorderRadius.circular(
+                                                    AppConstants.radiusSmall,
+                                                  ),
+                                                ),
+                                                backgroundColor: const Color(
+                                                  0xffEDE8FF,
+                                                ),
+                                                foregroundColor:
+                                                    AppConstants.primaryColor,
+                                              ),
+                                            ),
+                                            const SizedBox(width: 8),
+                                            IconButton(
+                                              onPressed: () {
+                                                setState(() {
+                                                  _selectedImage = null;
+                                                  _selectedImageBytes = null;
+                                                });
+                                              },
+                                              icon: const Icon(Icons.delete_outline),
+                                              color: Colors.red,
+                                              tooltip: 'Delete image',
+                                            ),
+                                          ],
+                                        ),
+                                      ],
+                                    ),
                                   ),
-                                ],
-                              ),
-                            ),
-                          )
-                        : _buildImageSection(),
-                    const SizedBox(height: 32),
-                    _buildSaveButton(),
-                    const SizedBox(height: 32),
-                  ],
-                ),
-              ),
+                                )
+                              : _buildImageSection(),
+                          const SizedBox(height: 32),
+                          _buildSaveButton(),
+                          const SizedBox(height: 32),
+                        ],
+                      ),
+                    ),
             ),
           ],
         ),
@@ -438,6 +536,13 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
   }
 
   Widget _buildCategorySelection() {
+    final selectedGroup = _taskGroups.isNotEmpty && _selectedTaskGroupId != null
+        ? _taskGroups.firstWhere(
+            (g) => g.id == _selectedTaskGroupId,
+            orElse: () => _taskGroups.first,
+          )
+        : null;
+
     return Container(
       padding: EdgeInsets.symmetric(horizontal: 16, vertical: 0),
       child: Column(
@@ -445,14 +550,43 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
         children: [
           CustomDropdown(
             label: 'Task Group',
-            items: _categories,
-            itemIcons: _categoryIcons,
-            selectedItem: _categories[_selectedCategoryIndex],
-            prefixIcon: _categoryIcons[_selectedCategoryIndex],
+            items: _taskGroups.map((g) => g.title).toList(),
+            itemIcons: List.generate(_taskGroups.length, (_) => Icons.folder),
+            selectedItem: selectedGroup?.title ?? 'Select Task Group',
+            prefixIcon: selectedGroup != null ? Icons.folder : Icons.folder_outlined,
             onChanged: (value) {
-              setState(() {
-                _selectedCategoryIndex = _categories.indexOf(value!);
-              });
+              if (value != null) {
+                final group = _taskGroups.firstWhere((g) => g.title == value);
+                setState(() {
+                  _selectedTaskGroupId = group.id;
+                });
+              }
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProjectDropdown() {
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CustomDropdown(
+            label: 'Project',
+            items: _projects.map((p) => p.title).toList(),
+            itemIcons: List.generate(_projects.length, (_) => Icons.work),
+            selectedItem: _selectedProject?.title ?? 'Select Project',
+            prefixIcon: _selectedProject != null ? Icons.work : Icons.work_outline,
+            onChanged: (value) {
+              if (value != null) {
+                final project = _projects.firstWhere((p) => p.title == value);
+                setState(() {
+                  _selectedProject = project;
+                });
+              }
             },
           ),
         ],
@@ -637,7 +771,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
         width: double.infinity,
         height: 56,
         child: ElevatedButton(
-          onPressed: _saveTask,
+          onPressed: _isLoading ? null : _saveTask,
           style: ElevatedButton.styleFrom(
             backgroundColor: AppConstants.primaryColor,
             foregroundColor: Colors.white,
@@ -646,10 +780,19 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
               borderRadius: BorderRadius.circular(AppConstants.radiusMedium),
             ),
           ),
-          child: const Text(
-            'Save Task',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-          ),
+          child: _isLoading
+              ? const SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                  ),
+                )
+              : const Text(
+                  'Save Task',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                ),
         ),
       ),
     );

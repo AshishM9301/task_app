@@ -47,6 +47,7 @@ class _CustomDropdownState extends State<CustomDropdown> {
       backgroundColor: Colors.transparent,
       builder: (BuildContext context) {
         return Container(
+          width: double.infinity,
           decoration: const BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.vertical(
