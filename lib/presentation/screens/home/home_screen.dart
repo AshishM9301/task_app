@@ -1,39 +1,118 @@
 import 'package:flutter/material.dart';
 import '../../../core/constants/app_constants.dart';
+import '../../../core/utils/api_utils.dart';
+import '../../../data/models/dashboard.dart';
 import '../../../data/models/user.dart';
 import '../../widgets/custom_circular_progress.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  Widget build(BuildContext context) {
-    final user = User(
-      id: '1',
-      name: 'John',
-      email: 'john@example.com',
-      avatarUrl: null,
-    );
+  State<HomeScreen> createState() => _HomeScreenState();
+}
 
+class _HomeScreenState extends State<HomeScreen> {
+  DashboardData? _dashboardData;
+  bool _isLoading = true;
+  String? _error;
+  final User _user = User(
+    id: '1',
+    name: 'John',
+    email: 'john@example.com',
+    avatarUrl: null,
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchDashboardData();
+  }
+
+  Future<void> _fetchDashboardData() async {
+    try {
+      setState(() {
+        _isLoading = true;
+        _error = null;
+      });
+
+      final response = await getDashboardData();
+
+      setState(() {
+        _dashboardData = response.data;
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _error = e.toString();
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppConstants.whiteColor,
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(AppConstants.paddingMedium),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildHeader(user),
-              const SizedBox(height: 24),
+        child: _isLoading
+            ? const Center(child: CircularProgressIndicator())
+            : _error != null
+            ? _buildErrorState()
+            : SingleChildScrollView(
+                padding: const EdgeInsets.all(AppConstants.paddingMedium),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildHeader(_user),
+                    const SizedBox(height: 24),
+                    _buildProgressCard(),
+                    const SizedBox(height: 24),
+                    _buildInProgressTasks(),
+                    const SizedBox(height: 24),
+                    _buildTaskGroups(),
+                  ],
+                ),
+              ),
+      ),
+    );
+  }
 
-              _buildProgressCard(),
-              const SizedBox(height: 24),
-              _buildInProgressTasks(),
-              const SizedBox(height: 24),
-              _buildTaskGroups(),
-            ],
+  Widget _buildErrorState() {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(
+            Icons.error_outline,
+            size: 64,
+            color: AppConstants.secondaryColor,
           ),
-        ),
+          const SizedBox(height: 16),
+          Text(
+            'Failed to load dashboard',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.w600,
+              color: AppConstants.blackColor,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            _error ?? 'Unknown error',
+            style: TextStyle(fontSize: 14, color: AppConstants.secondaryColor),
+            textAlign: TextAlign.center,
+          ),
+          const SizedBox(height: 24),
+          ElevatedButton(
+            onPressed: _fetchDashboardData,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppConstants.primaryColor,
+              foregroundColor: AppConstants.whiteColor,
+            ),
+            child: const Text('Retry'),
+          ),
+        ],
       ),
     );
   }
@@ -146,11 +225,8 @@ class HomeScreen extends StatelessWidget {
   }
 
   Widget _buildProgressCard() {
-    final completed = 12;
-    final inProgress = 5;
-    final pending = 3;
-    final total = completed + inProgress + pending;
-    final progressPercent = total > 0 ? (completed / total * 100).round() : 0;
+    final overview = _dashboardData!.overview;
+    final progressPercent = overview.completedPercentage.toDouble();
 
     return Stack(
       children: [
@@ -182,7 +258,6 @@ class HomeScreen extends StatelessWidget {
                   children: [
                     _buildTaskTitle(),
                     const SizedBox(height: 16),
-
                     ElevatedButton(
                       onPressed: () {},
                       style: ElevatedButton.styleFrom(
@@ -199,7 +274,7 @@ class HomeScreen extends StatelessWidget {
               ),
               const SizedBox(width: 20),
               CustomCircularProgress(
-                progressPercent: progressPercent.toDouble(),
+                progressPercent: progressPercent,
                 size: 100,
                 strokeWidth: 10,
                 progressColor: AppConstants.whiteColor,
@@ -257,36 +332,11 @@ class HomeScreen extends StatelessWidget {
   }
 
   Widget _buildInProgressTasks() {
-    final tasks = [
-      {
-        'title': 'Design UI Mockups',
-        'time': '10:00 AM',
-        'category': 'Design',
-        'color': const Color(0xFF10B981),
-        'progress': 0.65,
-      },
-      {
-        'title': 'Team Meeting',
-        'time': '2:00 PM',
-        'category': 'Meeting',
-        'color': const Color(0xFFF59E0B),
-        'progress': 0.40,
-      },
-      {
-        'title': 'Code Review',
-        'time': '4:30 PM',
-        'category': 'Development',
-        'color': const Color(0xFF3B82F6),
-        'progress': 0.80,
-      },
-      {
-        'title': 'API Integration',
-        'time': '5:00 PM',
-        'category': 'Development',
-        'color': const Color(0xFF8B5CF6),
-        'progress': 0.55,
-      },
-    ];
+    final tasks = _dashboardData!.inProgressTasks;
+
+    if (tasks.isEmpty) {
+      return const SizedBox.shrink();
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -310,9 +360,13 @@ class HomeScreen extends StatelessWidget {
                 shape: BoxShape.circle,
               ),
               child: Center(
-                child: const Text(
-                  '6',
-                  style: TextStyle(color: AppConstants.primaryColor),
+                child: Text(
+                  '${tasks.length}',
+                  style: const TextStyle(
+                    color: AppConstants.primaryColor,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
               ),
             ),
@@ -325,18 +379,18 @@ class HomeScreen extends StatelessWidget {
             scrollDirection: Axis.horizontal,
             physics: const BouncingScrollPhysics(),
             child: Row(
-              children: tasks.map((task) {
+              children: tasks.asMap().entries.map((entry) {
+                final task = entry.value;
                 return Padding(
                   padding: EdgeInsets.only(
                     right: 12,
-                    left: task == tasks.first ? 0 : 0,
+                    left: entry.key == 0 ? 0 : 0,
                   ),
                   child: _buildInProgressCard(
-                    title: task['title'] as String,
-                    time: task['time'] as String,
-                    category: task['category'] as String,
-                    color: task['color'] as Color,
-                    progress: task['progress'] as double,
+                    title: task.title,
+                    category: task.taskGroupTitle,
+                    color: _getCategoryColor(task.taskGroupSlug),
+                    progress: 0.5,
                   ),
                 );
               }).toList(),
@@ -347,9 +401,17 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
+  Color _getCategoryColor(String slug) {
+    final colors = {
+      'design': const Color(0xFF10B981),
+      'development': const Color(0xFF3B82F6),
+      'meeting': const Color(0xFFF59E0B),
+    };
+    return colors[slug.toLowerCase()] ?? AppConstants.primaryColor;
+  }
+
   Widget _buildInProgressCard({
     required String title,
-    required String time,
     required String category,
     required Color color,
     required double progress,
@@ -403,7 +465,7 @@ class HomeScreen extends StatelessWidget {
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
           ),
-          Spacer(),
+          const Spacer(),
           ClipRRect(
             borderRadius: BorderRadius.circular(4),
             child: LinearProgressIndicator(
@@ -517,12 +579,12 @@ class HomeScreen extends StatelessWidget {
   }
 
   IconData _getCategoryIcon(String category) {
-    switch (category) {
-      case 'Design':
+    switch (category.toLowerCase()) {
+      case 'design':
         return Icons.brush_outlined;
-      case 'Meeting':
+      case 'meeting':
         return Icons.people_outline;
-      case 'Development':
+      case 'development':
         return Icons.code_outlined;
       default:
         return Icons.task_alt;
@@ -530,11 +592,10 @@ class HomeScreen extends StatelessWidget {
   }
 
   Widget _buildTaskTitle() {
-    final completed = 12;
-    final inProgress = 5;
-    final pending = 3;
-    final total = completed + inProgress + pending;
-    final progress = total > 0 ? completed / total : 0.0;
+    final overview = _dashboardData!.overview;
+    final progress = overview.totalTasks > 0
+        ? overview.completedTasks / overview.totalTasks
+        : 0.0;
 
     String message;
     if (progress == 0) {
@@ -562,36 +623,7 @@ class HomeScreen extends StatelessWidget {
   }
 
   Widget _buildTaskGroups() {
-    final taskGroups = [
-      {
-        'name': 'Work',
-        'totalTasks': 12,
-        'completedTasks': 8,
-        'color': const Color(0xFF3B82F6),
-        'icon': Icons.work,
-      },
-      {
-        'name': 'Personal',
-        'totalTasks': 8,
-        'completedTasks': 5,
-        'color': const Color(0xFF10B981),
-        'icon': Icons.person,
-      },
-      {
-        'name': 'Shopping',
-        'totalTasks': 6,
-        'completedTasks': 2,
-        'color': const Color(0xFFF59E0B),
-        'icon': Icons.shopping_bag,
-      },
-      {
-        'name': 'Health',
-        'totalTasks': 4,
-        'completedTasks': 4,
-        'color': const Color(0xFFEF4444),
-        'icon': Icons.health_and_safety,
-      },
-    ];
+    final taskGroups = _dashboardData!.taskGroups;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -607,15 +639,35 @@ class HomeScreen extends StatelessWidget {
         const SizedBox(height: 16),
         ...taskGroups.map(
           (group) => _buildTaskGroupItem(
-            name: group['name'] as String,
-            totalTasks: group['totalTasks'] as int,
-            completedTasks: group['completedTasks'] as int,
-            color: group['color'] as Color,
-            icon: group['icon'] as IconData,
+            name: group.title,
+            totalTasks: group.totalTasks,
+            completedTasks: group.completedTasks,
+            color: _getGroupColor(group.slug),
+            icon: _getGroupIcon(group.slug),
           ),
         ),
       ],
     );
+  }
+
+  Color _getGroupColor(String slug) {
+    final colors = {
+      'work': const Color(0xFF3B82F6),
+      'personal': const Color(0xFF10B981),
+      'shopping': const Color(0xFFF59E0B),
+      'health': const Color(0xFFEF4444),
+    };
+    return colors[slug.toLowerCase()] ?? AppConstants.primaryColor;
+  }
+
+  IconData _getGroupIcon(String slug) {
+    final icons = {
+      'work': Icons.work,
+      'personal': Icons.person,
+      'shopping': Icons.shopping_bag,
+      'health': Icons.health_and_safety,
+    };
+    return icons[slug.toLowerCase()] ?? Icons.folder;
   }
 
   Widget _buildTaskGroupItem({
@@ -626,7 +678,6 @@ class HomeScreen extends StatelessWidget {
     required IconData icon,
   }) {
     final progress = totalTasks > 0 ? completedTasks / totalTasks : 0.0;
-    final remaining = totalTasks - completedTasks;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -652,7 +703,6 @@ class HomeScreen extends StatelessWidget {
             ),
             child: Icon(icon, color: color, size: 24),
           ),
-
           const SizedBox(width: 16),
           Expanded(
             child: Column(
