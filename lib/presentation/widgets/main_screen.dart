@@ -14,11 +14,13 @@ class MainScreen extends StatefulWidget {
 class _MainScreenState extends State<MainScreen> {
   int _currentIndex = 0;
 
-  final List<Widget> _screens = const [
-    HomeScreen(),
-    CalendarScreen(),
-    TaskHistoryScreen(),
-    ProfileScreen(),
+  final CalendarScreenController _calendarController = CalendarScreenController();
+
+  late final List<Widget> _screens = [
+    const HomeScreen(),
+    CalendarScreen(controller: _calendarController),
+    const TaskHistoryScreen(),
+    const ProfileScreen(),
   ];
 
   @override
@@ -31,10 +33,13 @@ class _MainScreenState extends State<MainScreen> {
         backgroundColor: AppConstants.primaryColor,
         foregroundColor: Colors.white,
         shape: const CircleBorder(),
-        onPressed: () {
-          Navigator.of(context).push(
+        onPressed: () async {
+          final created = await Navigator.of(context).push<bool>(
             MaterialPageRoute(builder: (context) => const AddTaskScreen()),
           );
+          if (created == true) {
+            _calendarController.refresh();
+          }
         },
         child: const Icon(Icons.add),
       ),
@@ -65,7 +70,12 @@ class _MainScreenState extends State<MainScreen> {
                     selectedPath: 'assets/icons/calendar-selected.png',
                     unselectedPath: 'assets/icons/calendar.png',
                     isSelected: _currentIndex == 1,
-                    onTap: () => setState(() => _currentIndex = 1),
+                    onTap: () {
+                      setState(() => _currentIndex = 1);
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        _calendarController.refresh();
+                      });
+                    },
                   ),
                   SizedBox(width: 56),
                   _NavItem(

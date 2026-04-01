@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:task_app/core/constants/app_constants.dart';
 import 'package:task_app/data/models/task.dart';
+import 'package:task_app/core/utils/api_utils.dart';
+import 'package:task_app/data/models/models.dart';
 
 class TaskHistoryScreen extends StatefulWidget {
   final bool hasNotification;
@@ -15,68 +17,18 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
   String _selectedFilter = 'All';
   String _searchQuery = '';
 
-  final List<Task> _sampleTasks = [
-    Task(
-      id: '1',
-      title: 'Complete project documentation',
-      description: 'Write comprehensive docs for the new API',
-      dueDate: DateTime.now().subtract(const Duration(days: 1)),
-      priority: TaskPriority.high,
-      taskType: TaskType.work,
-      status: TaskStatus.completed,
-      createdAt: DateTime.now().subtract(const Duration(days: 5)),
-      completedAt: DateTime.now().subtract(const Duration(days: 1)),
-    ),
-    Task(
-      id: '2',
-      title: 'Design landing page mockups',
-      description: 'Create mockups for the new landing page',
-      dueDate: DateTime.now().subtract(const Duration(days: 3)),
-      priority: TaskPriority.medium,
-      taskType: TaskType.personal,
-      status: TaskStatus.completed,
-      createdAt: DateTime.now().subtract(const Duration(days: 10)),
-      completedAt: DateTime.now().subtract(const Duration(days: 3)),
-    ),
-    Task(
-      id: '3',
-      title: 'Fix login bug',
-      description: 'Users cannot login with Google OAuth',
-      dueDate: DateTime.now().subtract(const Duration(days: 5)),
-      priority: TaskPriority.high,
-      taskType: TaskType.work,
-      status: TaskStatus.completed,
-      createdAt: DateTime.now().subtract(const Duration(days: 7)),
-      completedAt: DateTime.now().subtract(const Duration(days: 5)),
-    ),
-    Task(
-      id: '4',
-      title: 'Update dependencies',
-      description: 'Update all npm packages to latest versions',
-      dueDate: DateTime.now().subtract(const Duration(days: 8)),
-      priority: TaskPriority.low,
-      taskType: TaskType.personal,
-      status: TaskStatus.completed,
-      createdAt: DateTime.now().subtract(const Duration(days: 12)),
-      completedAt: DateTime.now().subtract(const Duration(days: 8)),
-    ),
-    Task(
-      id: '5',
-      title: 'Code review for PR #42',
-      description: 'Review the new authentication flow',
-      dueDate: DateTime.now().subtract(const Duration(days: 12)),
-      priority: TaskPriority.medium,
-      taskType: TaskType.work,
-      status: TaskStatus.completed,
-      createdAt: DateTime.now().subtract(const Duration(days: 14)),
-      completedAt: DateTime.now().subtract(const Duration(days: 12)),
-    ),
-  ];
+  final List<Task> _tasks = [];
+  bool _isLoading = false;
+  bool _isLoadingMore = false;
+  String? _errorMessage;
+
+  int _page = 1;
+  int _limit = 10;
+  bool _hasNextPage = false;
 
   List<Task> get _filteredTasks {
-    List<Task> tasks = _sampleTasks
-        .where((task) => task.status == TaskStatus.completed)
-        .toList();
+    List<Task> tasks =
+        _tasks.where((task) => task.status == TaskStatus.completed).toList();
 
     if (_searchQuery.isNotEmpty) {
       tasks = tasks
@@ -115,6 +67,140 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
     return tasks;
   }
 
+  @override
+  void initState() {
+    super.initState();
+    _loadFirstPage();
+  }
+
+  String _mapFilterToDateRange(String filter) {
+    switch (filter) {
+      case 'Last 7 Days':
+        return '7days';
+      case 'Last Month':
+        return 'lastMonth';
+      case 'All':
+      default:
+        // Backend may treat empty/unknown as "all"; safest is a wide range.
+        return 'lastMonth';
+    }
+  }
+
+  TaskStatus _mapApiStatus(String status) {
+    switch (status.toLowerCase()) {
+      case 'completed':
+        return TaskStatus.completed;
+      case 'in_progress':
+      case 'in progress':
+        return TaskStatus.inProgress;
+      case 'pending':
+      default:
+        return TaskStatus.pending;
+    }
+  }
+
+  TaskType _mapProjectTitleToType(String projectTitle) {
+    final t = projectTitle.toLowerCase();
+    if (t.contains('personal') || t.contains('home')) return TaskType.personal;
+    return TaskType.work;
+  }
+
+  DateTime _safeParseDate(String? iso, {required DateTime fallback}) {
+    if (iso == null) return fallback;
+    try {
+      return DateTime.parse(iso).toLocal();
+    } catch (_) {
+      return fallback;
+    }
+  }
+
+  Task _mapApiTaskToUi(TaskHistoryApiTask api) {
+    final createdAt = _safeParseDate(api.createdAt, fallback: DateTime.now());
+    final completedAt =
+        api.endedAt != null ? _safeParseDate(api.endedAt, fallback: createdAt) : null;
+    final status = _mapApiStatus(api.status);
+
+    return Task(
+      id: api.id.toString(),
+      title: api.title,
+      description: api.description,
+      dueDate: completedAt ?? createdAt,
+      priority: TaskPriority.medium,
+      taskType: _mapProjectTitleToType(api.projectTitle),
+      status: status,
+      createdAt: createdAt,
+      completedAt: status == TaskStatus.completed ? completedAt : null,
+    );
+  }
+
+  Future<void> _loadFirstPage() async {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+      _page = 1;
+      _limit = 10;
+    });
+
+    try {
+      final res = await getTaskHistory(
+        page: _page,
+        limit: _limit,
+        dateRange: _mapFilterToDateRange(_selectedFilter),
+      );
+
+      final mapped = res.data.tasks.map(_mapApiTaskToUi).toList();
+      setState(() {
+        _tasks
+          ..clear()
+          ..addAll(mapped);
+        _hasNextPage = res.data.pagination.hasNextPage;
+      });
+    } catch (e) {
+      setState(() {
+        _errorMessage = e.toString();
+      });
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
+  }
+
+  Future<void> _loadMore() async {
+    if (_isLoadingMore || _isLoading || !_hasNextPage) return;
+    setState(() => _isLoadingMore = true);
+
+    try {
+      final nextPage = _page + 1;
+      final res = await getTaskHistory(
+        page: nextPage,
+        limit: _limit,
+        dateRange: _mapFilterToDateRange(_selectedFilter),
+      );
+
+      final mapped = res.data.tasks.map(_mapApiTaskToUi).toList();
+      setState(() {
+        _page = nextPage;
+        _tasks.addAll(mapped);
+        _hasNextPage = res.data.pagination.hasNextPage;
+      });
+    } catch (e) {
+      // Keep existing items; show a lightweight error.
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error loading more: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoadingMore = false);
+      }
+    }
+  }
+
   List<Task> get _recentlyCompleted {
     final now = DateTime.now();
     final threeDaysAgo = now.subtract(const Duration(days: 3));
@@ -148,14 +234,69 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppConstants.primaryColor.withOpacity(0.1),
-      body: SingleChildScrollView(
-        child: Column(
-          children: [
-            _buildHeader(),
-            _buildSearchBar(),
-            _buildFilterPills(),
-            _buildTaskSections(),
-          ],
+      body: NotificationListener<ScrollNotification>(
+        onNotification: (notification) {
+          final metrics = notification.metrics;
+          if (metrics.pixels >= (metrics.maxScrollExtent - 200)) {
+            _loadMore();
+          }
+          return false;
+        },
+        child: SingleChildScrollView(
+          child: Column(
+            children: [
+              _buildHeader(),
+              _buildSearchBar(),
+              _buildFilterPills(),
+              if (_isLoading)
+                const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: Center(child: CircularProgressIndicator()),
+                )
+              else if (_errorMessage != null)
+                Padding(
+                  padding: const EdgeInsets.all(24),
+                  child: Column(
+                    children: [
+                      const Text(
+                        'Failed to load history',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w600,
+                          color: AppConstants.blackColor,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        _errorMessage!,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          color: AppConstants.secondaryColor,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton(
+                          onPressed: _loadFirstPage,
+                          child: const Text('Retry'),
+                        ),
+                      ),
+                    ],
+                  ),
+                )
+              else ...[
+                _buildTaskSections(),
+                if (_isLoadingMore)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(vertical: 16),
+                    child: Center(child: CircularProgressIndicator()),
+                  ),
+                if (!_hasNextPage)
+                  const SizedBox(height: 20),
+              ],
+            ],
+          ),
         ),
       ),
     );
@@ -310,6 +451,7 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
                   setState(() {
                     _selectedFilter = filter;
                   });
+                  _loadFirstPage();
                 },
                 child: Container(
                   padding: const EdgeInsets.symmetric(vertical: 10),
@@ -649,17 +791,6 @@ class _TaskHistoryScreenState extends State<TaskHistoryScreen> {
         return Colors.orange;
       case TaskType.low:
         return Colors.green;
-    }
-  }
-
-  IconData _getTaskTypeIcon(TaskType taskType) {
-    switch (taskType) {
-      case TaskType.work:
-        return Icons.work;
-      case TaskType.personal:
-        return Icons.person;
-      case TaskType.low:
-        return Icons.low_priority;
     }
   }
 

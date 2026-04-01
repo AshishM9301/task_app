@@ -6,7 +6,9 @@ import '../../data/models/models.dart';
 class ApiConstants {
   ApiConstants._();
 
-  static const String baseUrl = 'https://task-app-api-qhip.onrender.com';
+  static const String baseUrl = 'http://localhost:5000';
+
+  // static const String baseUrl = 'https://task-app-api-qhip.onrender.com';
   static const String apiPath = '/api';
 }
 
@@ -125,6 +127,65 @@ Future<CreateTaskResponse> createTask({
         statusCode: response.statusCode,
       );
     }
+  } catch (e) {
+    if (e is ApiException) rethrow;
+    throw ApiException('Network error: ${e.toString()}');
+  }
+}
+
+Future<TasksByDateResponse> getTasksByDate({required String date}) async {
+  try {
+    final response = await http.get(
+      Uri.parse(
+        '${ApiConstants.baseUrl}${ApiConstants.apiPath}/task/by-date?date=$date',
+      ),
+      headers: {'Content-Type': 'application/json'},
+    );
+
+    if (response.statusCode == 200) {
+      final json = jsonDecode(response.body) as Map<String, dynamic>;
+      return TasksByDateResponse.fromJson(json);
+    }
+
+    throw ApiException(
+      'Failed to fetch tasks by date',
+      statusCode: response.statusCode,
+    );
+  } catch (e) {
+    if (e is ApiException) rethrow;
+    throw ApiException('Network error: ${e.toString()}');
+  }
+}
+
+Future<TaskHistoryResponse> getTaskHistory({
+  required int page,
+  required int limit,
+  required String dateRange,
+}) async {
+  try {
+    final uri = Uri.parse('${ApiConstants.baseUrl}${ApiConstants.apiPath}/task/history')
+        .replace(
+      queryParameters: <String, String>{
+        'page': page.toString(),
+        'limit': limit.toString(),
+        'dateRange': dateRange,
+      },
+    );
+
+    final response = await http.get(
+      uri,
+      headers: {'Content-Type': 'application/json'},
+    );
+
+    if (response.statusCode == 200) {
+      final json = jsonDecode(response.body) as Map<String, dynamic>;
+      return TaskHistoryResponse.fromJson(json);
+    }
+
+    throw ApiException(
+      'Failed to fetch task history',
+      statusCode: response.statusCode,
+    );
   } catch (e) {
     if (e is ApiException) rethrow;
     throw ApiException('Network error: ${e.toString()}');

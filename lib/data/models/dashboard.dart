@@ -152,3 +152,78 @@ class DashboardResponse {
     );
   }
 }
+
+class TaskByDate {
+  final int id;
+  final int taskGroupId;
+  final int projectId;
+  final String projectTitle;
+  final String title;
+  final String? description;
+  final String? startedAt;
+  final String? endedAt;
+  final String status;
+  final String? createdAt;
+
+  const TaskByDate({
+    required this.id,
+    required this.taskGroupId,
+    required this.projectId,
+    required this.projectTitle,
+    required this.title,
+    this.description,
+    this.startedAt,
+    this.endedAt,
+    required this.status,
+    this.createdAt,
+  });
+
+  factory TaskByDate.fromJson(Map<String, dynamic> json) {
+    return TaskByDate(
+      id: json['id'] as int,
+      taskGroupId: json['task_group_id'] as int,
+      projectId: json['project_id'] as int,
+      projectTitle: json['project_title'] as String,
+      title: json['title'] as String,
+      description: json['description'] as String?,
+      startedAt: json['started_at'] as String?,
+      endedAt: json['ended_at'] as String?,
+      status: json['status'] as String,
+      createdAt: json['created_at'] as String?,
+    );
+  }
+}
+
+class TasksByDateData {
+  final List<TaskByDate> tasks;
+
+  const TasksByDateData({required this.tasks});
+
+  factory TasksByDateData.fromJson(Map<String, dynamic> json) {
+    return TasksByDateData(
+      tasks: (json['data'] as List<dynamic>)
+          .map((e) => TaskByDate.fromJson(e as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+}
+
+class TasksByDateResponse {
+  final bool success;
+  final String message;
+  final TasksByDateData data;
+
+  const TasksByDateResponse({
+    required this.success,
+    required this.message,
+    required this.data,
+  });
+
+  factory TasksByDateResponse.fromJson(Map<String, dynamic> json) {
+    return TasksByDateResponse(
+      success: json['success'] as bool,
+      message: json['message'] as String,
+      data: TasksByDateData.fromJson(json),
+    );
+  }
+}

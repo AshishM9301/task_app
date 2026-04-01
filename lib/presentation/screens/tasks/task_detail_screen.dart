@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-
+import 'package:intl/intl.dart';
 import '../../../core/constants/app_constants.dart';
 
 class TaskDetailScreen extends StatefulWidget {
@@ -347,7 +347,9 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               const SizedBox(width: 20),
               _buildMetaItem(
                 icon: Icons.play_arrow,
-                label: widget.startTime,
+                label: DateFormat(
+                  'dd MMM yyyy',
+                ).format(DateTime.parse(widget.startTime!)),
                 iconColor: AppConstants.primaryColor,
               ),
             ],
@@ -355,7 +357,9 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               const SizedBox(width: 20),
               _buildMetaItem(
                 icon: Icons.stop,
-                label: widget.endTime,
+                label: DateFormat(
+                  'dd MMM yyyy',
+                ).format(DateTime.parse(widget.endTime!)),
                 iconColor: AppConstants.primaryColor,
               ),
             ],

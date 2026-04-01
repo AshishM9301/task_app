@@ -39,7 +39,6 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
 
   DateTime? _startDate;
   DateTime? _endDate;
-  File? _selectedImage;
   Uint8List? _selectedImageBytes;
 
   final ImagePicker _picker = ImagePicker();
@@ -92,7 +91,8 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
         setState(() {
           _selectedImageBytes = bytes;
           if (!kIsWeb) {
-            _selectedImage = File(image.path);
+            // Kept bytes for preview; file path not needed elsewhere.
+            File(image.path);
           }
         });
       }
@@ -306,7 +306,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
           'status': response.data.status,
         });
 
-        Navigator.of(context).pop();
+        Navigator.of(context).pop(true);
       }
     } catch (e) {
       if (mounted) {
@@ -438,7 +438,6 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                                             IconButton(
                                               onPressed: () {
                                                 setState(() {
-                                                  _selectedImage = null;
                                                   _selectedImageBytes = null;
                                                 });
                                               },
