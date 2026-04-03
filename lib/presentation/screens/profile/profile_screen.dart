@@ -1,9 +1,38 @@
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/material.dart';
 import 'package:task_app/core/constants/app_constants.dart';
-import 'package:task_app/core/widgets/icons/icons.dart';
+
+import '../auth/login_screen.dart';
 
 class ProfileScreen extends StatelessWidget {
   const ProfileScreen({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        final user = snapshot.data;
+        if (user == null) {
+          // Login is only required for profile.
+          return const LoginScreen();
+        }
+
+        return _ProfileContent(user: user);
+      },
+    );
+  }
+}
+
+class _ProfileContent extends StatelessWidget {
+  final User user;
+  const _ProfileContent({required this.user});
 
   @override
   Widget build(BuildContext context) {
@@ -36,7 +65,9 @@ class ProfileScreen extends StatelessWidget {
                           image: DecorationImage(
                             fit: BoxFit.fill,
                             image: NetworkImage(
-                              "https://i.imgur.com/BoN9kdC.png",
+                              user.photoURL?.isNotEmpty == true
+                                  ? user.photoURL!
+                                  : "https://i.imgur.com/BoN9kdC.png",
                             ),
                           ),
                         ),
@@ -47,7 +78,7 @@ class ProfileScreen extends StatelessWidget {
               ),
               const SizedBox(height: 20),
               Text(
-                "John Doe",
+                (user.displayName?.isNotEmpty == true) ? user.displayName! : 'Anonymous',
                 style: TextStyle(
                   fontSize: 24,
                   fontWeight: FontWeight.bold,
@@ -56,7 +87,7 @@ class ProfileScreen extends StatelessWidget {
               ),
               const SizedBox(height: 5),
               Text(
-                "john.doe@example.com",
+                user.email ?? '',
                 style: TextStyle(fontSize: 16, color: Colors.grey[600]),
               ),
               const SizedBox(height: 30),
@@ -152,7 +183,10 @@ class ProfileScreen extends StatelessWidget {
             color: isLogout ? Colors.red : Colors.grey[400],
           ),
           onTap: () {
-            // Handle tap
+            if (isLogout) {
+              FirebaseAuth.instance.signOut();
+              return;
+            }
           },
         ),
       ),

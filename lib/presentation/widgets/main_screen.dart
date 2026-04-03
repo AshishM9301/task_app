@@ -5,14 +5,16 @@ import '../../core/widgets/app_icon.dart';
 import '../../core/constants/app_constants.dart';
 
 class MainScreen extends StatefulWidget {
-  const MainScreen({super.key});
+  final int initialIndex;
+
+  const MainScreen({super.key, this.initialIndex = 0});
 
   @override
   State<MainScreen> createState() => _MainScreenState();
 }
 
 class _MainScreenState extends State<MainScreen> {
-  int _currentIndex = 0;
+  late int _currentIndex = widget.initialIndex;
 
   final CalendarScreenController _calendarController = CalendarScreenController();
 

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart' as fb_auth;
 import '../../../core/constants/app_constants.dart';
 import '../../../core/utils/api_utils.dart';
 import '../../../data/models/dashboard.dart';
@@ -16,12 +17,30 @@ class _HomeScreenState extends State<HomeScreen> {
   DashboardData? _dashboardData;
   bool _isLoading = true;
   String? _error;
-  final User _user = User(
-    id: '1',
+
+  static const User _demoUser = User(
+    id: 'demo',
     name: 'John',
     email: 'john@example.com',
     avatarUrl: null,
   );
+
+  User _userFromFirebaseOrDemo(fb_auth.User? fbUser) {
+    if (fbUser == null) return _demoUser;
+
+    final email = (fbUser.email ?? '').trim();
+    final displayName = (fbUser.displayName ?? '').trim();
+    final derivedName = displayName.isNotEmpty
+        ? displayName
+        : (email.isNotEmpty ? email.split('@').first : 'User');
+
+    return User(
+      id: fbUser.uid,
+      name: derivedName,
+      email: email.isNotEmpty ? email : 'unknown@example.com',
+      avatarUrl: fbUser.photoURL,
+    );
+  }
 
   @override
   void initState() {
@@ -64,7 +83,12 @@ class _HomeScreenState extends State<HomeScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildHeader(_user),
+                    StreamBuilder<fb_auth.User?>(
+                      stream: fb_auth.FirebaseAuth.instance.authStateChanges(),
+                      builder: (context, snapshot) {
+                        return _buildHeader(_userFromFirebaseOrDemo(snapshot.data));
+                      },
+                    ),
                     const SizedBox(height: 24),
                     _buildProgressCard(),
                     const SizedBox(height: 24),
