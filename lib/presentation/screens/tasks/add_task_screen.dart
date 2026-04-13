@@ -1,9 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/foundation.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:provider/provider.dart';
 import 'dart:io';
 import 'dart:typed_data';
 import '../../../core/constants/app_constants.dart';
+import '../../../data/utils/api_service.dart';
+import '../../../providers/guest_provider.dart';
 import '../../widgets/custom_dropdown.dart';
 import '../../widgets/custom_input_field.dart';
 
@@ -26,11 +29,20 @@ class AddTaskScreen extends StatefulWidget {
 }
 
 class _AddTaskScreenState extends State<AddTaskScreen> {
-  int _selectedCategoryIndex = 0;
-  final List<String> _categories = ['Work', 'Personal'];
-  final List<IconData> _categoryIcons = [Icons.work, Icons.person];
+  final ApiService _apiService = ApiService();
+  final ImagePicker _picker = ImagePicker();
 
-  final TextEditingController _projectNameController = TextEditingController();
+  int _selectedCategoryIndex = 0;
+  int _selectedProjectIndex = 0;
+  List<dynamic> _taskGroups = [];
+  List<String> _categories = ['Work', 'Personal'];
+  List<IconData> _categoryIcons = [Icons.work, Icons.person];
+  static const _addNewProjectSlug = 'add-new-project';
+  List<dynamic> _projects = [];
+  bool _isLoadingTaskGroups = true;
+  bool _isLoadingProjects = true;
+  bool _isInitialLoading = true;
+
   final TextEditingController _taskNameController = TextEditingController();
   final TextEditingController _descriptionController = TextEditingController();
 
@@ -38,8 +50,157 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
   DateTime? _endDate;
   File? _selectedImage;
   Uint8List? _selectedImageBytes;
+  bool _isSaving = false;
 
-  final ImagePicker _picker = ImagePicker();
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _fetchTaskGroups();
+      _fetchProjects();
+    });
+  }
+
+  Future<void> _fetchTaskGroups() async {
+    try {
+      final response = await _apiService.getAllTaskGroups();
+      if (response.success && response.data != null) {
+        if (mounted) {
+          setState(() {
+            _taskGroups = response.data!;
+            if (_taskGroups.isNotEmpty) {
+              _categories = _taskGroups.map((g) => g['title']?.toString() ?? 'Untitled').toList();
+              _categoryIcons = List.generate(_categories.length, (i) => _getCategoryIcon(i));
+            }
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Error fetching task groups: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingTaskGroups = false;
+          _checkInitialLoadingComplete();
+        });
+      }
+    }
+  }
+
+  Future<void> _fetchProjects() async {
+    try {
+      final response = await _apiService.getAllProjects();
+      if (response.success && response.data != null) {
+        if (mounted) {
+          setState(() {
+            _projects = response.data!;
+          });
+        }
+      }
+    } catch (e) {
+      debugPrint('Error fetching projects: $e');
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isLoadingProjects = false;
+          _checkInitialLoadingComplete();
+        });
+      }
+    }
+  }
+
+  void _checkInitialLoadingComplete() {
+    if (!_isLoadingTaskGroups && !_isLoadingProjects) {
+      setState(() {
+        _isInitialLoading = false;
+      });
+    }
+  }
+
+  IconData _getCategoryIcon(int index) {
+    final icons = [Icons.work, Icons.person, Icons.shopping_bag, Icons.health_and_safety, Icons.code, Icons.school];
+    return icons[index % icons.length];
+  }
+
+  void _showAddProjectDialog() {
+    final controller = TextEditingController();
+    bool isLoading = false;
+
+    Future.microtask(() async {
+      if (!mounted) return;
+
+      await showDialog<String>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => StatefulBuilder(
+          builder: (context, setDialogState) => AlertDialog(
+            title: const Text('Add New Project'),
+            content: isLoading
+                ? const SizedBox(
+                    height: 100,
+                    child: Center(child: CircularProgressIndicator()),
+                  )
+                : TextField(
+                    controller: controller,
+                    decoration: const InputDecoration(
+                      labelText: 'Project Name',
+                      hintText: 'Enter project name',
+                    ),
+                    autofocus: true,
+                  ),
+            actions: isLoading
+                ? []
+                : [
+                    TextButton(
+                      onPressed: () => Navigator.pop(dialogContext, 'cancel'),
+                      child: const Text('Cancel'),
+                    ),
+                    ElevatedButton(
+                      onPressed: () async {
+                        final name = controller.text.trim();
+                        if (name.isEmpty) return;
+
+                        setDialogState(() => isLoading = true);
+
+                        try {
+                          final response = await _apiService.createProject(title: name);
+                          if (response.success && response.data != null) {
+                            setState(() {
+                              _projects.add(response.data!);
+                              _selectedProjectIndex = _projects.length - 1;
+                            });
+                            if (mounted) Navigator.pop(dialogContext, 'created');
+                          } else {
+                            setDialogState(() => isLoading = false);
+                            if (mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                  content: Text(response.message),
+                                  backgroundColor: Colors.red,
+                                ),
+                              );
+                            }
+                          }
+                        } catch (e) {
+                          setDialogState(() => isLoading = false);
+                          if (mounted) {
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              SnackBar(
+                                content: Text('Error: $e'),
+                                backgroundColor: Colors.red,
+                              ),
+                            );
+                          }
+                        }
+                      },
+                      child: const Text('Add'),
+                    ),
+                  ],
+          ),
+        ),
+      );
+    });
+  }
 
   Future<void> _pickImage(ImageSource source) async {
     try {
@@ -181,23 +342,13 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
 
   String _formatDate(DateTime date) {
     final months = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
     ];
     return '${months[date.month - 1]} ${date.day}, ${date.year}';
   }
 
-  void _saveTask() {
+  Future<void> _saveTask() async {
     if (_taskNameController.text.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -208,24 +359,111 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
       return;
     }
 
-    final taskData = {
-      'category': _categories[_selectedCategoryIndex],
-      'categoryIcon': _categoryIcons[_selectedCategoryIndex],
-      'projectName': _projectNameController.text,
-      'taskName': _taskNameController.text,
-      'description': _descriptionController.text,
-      'startDate': _startDate,
-      'endDate': _endDate,
-      'image': _selectedImage,
-    };
+    if (_startDate == null || _endDate == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select start and end dates'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
 
-    widget.onTaskAdded?.call(taskData);
-    Navigator.of(context).pop();
+    if (_selectedCategoryIndex >= _taskGroups.length) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('Please select a task group'),
+          backgroundColor: Colors.red,
+        ),
+      );
+      return;
+    }
+
+    setState(() {
+      _isSaving = true;
+    });
+
+    try {
+      final guestProvider = context.read<GuestProvider>();
+      if (!guestProvider.hasGuestKey) {
+        await guestProvider.initializeGuestKey();
+      }
+
+      final taskGroupId = _taskGroups[_selectedCategoryIndex]['id'];
+      final isAddNewProject = _selectedProjectIndex >= _projects.length;
+      final projectTitle = isAddNewProject
+          ? 'Default Project'
+          : _projects[_selectedProjectIndex]['title']?.toString() ?? 'Default Project';
+      final projectId = isAddNewProject
+          ? null
+          : _projects[_selectedProjectIndex]['id'];
+
+      final response = await _apiService.createTask(
+        title: _taskNameController.text,
+        description: _descriptionController.text,
+        taskGroupId: taskGroupId as int,
+        projectTitle: projectTitle,
+        projectId: projectId as int?,
+        startedAt: _startDate!,
+        endedAt: _endDate!,
+        status: 'pending',
+      );
+
+      setState(() {
+        _isSaving = false;
+      });
+
+      if (response.success) {
+        final taskData = {
+          'category': _categories[_selectedCategoryIndex],
+          'categoryIcon': _categoryIcons[_selectedCategoryIndex],
+          'projectName': projectTitle,
+          'taskName': _taskNameController.text,
+          'description': _descriptionController.text,
+          'startDate': _startDate,
+          'endDate': _endDate,
+          'image': _selectedImage,
+          'apiResponse': response.data,
+        };
+
+        widget.onTaskAdded?.call(taskData);
+
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Task created successfully'),
+              backgroundColor: Colors.green,
+            ),
+          );
+          Navigator.of(context).pop();
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(response.message),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      setState(() {
+        _isSaving = false;
+      });
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error creating task: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    }
   }
 
   @override
   void dispose() {
-    _projectNameController.dispose();
     _taskNameController.dispose();
     _descriptionController.dispose();
     super.dispose();
@@ -236,134 +474,61 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
     return Scaffold(
       backgroundColor: AppConstants.whiteColor,
       body: SafeArea(
-        child: Column(
-          children: [
-            _buildHeader(),
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(AppConstants.paddingMedium),
+        child: _isInitialLoading
+            ? const Center(
                 child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    _buildCategorySelection(),
-                    const SizedBox(height: 24),
-                    CustomInputField(
-                      controller: _projectNameController,
-                      label: 'Project Name',
-                      hint: 'Enter project name',
+                    CircularProgressIndicator(
+                      color: AppConstants.primaryColor,
                     ),
-                    const SizedBox(height: 16),
-                    CustomInputField(
-                      controller: _taskNameController,
-                      label: 'Task Name',
-                      hint: 'Enter task name',
+                    SizedBox(height: 16),
+                    Text(
+                      'Loading...',
+                      style: TextStyle(
+                        color: AppConstants.secondaryColor,
+                        fontSize: 14,
+                      ),
                     ),
-                    const SizedBox(height: 16),
-                    _buildDescriptionField(),
-                    const SizedBox(height: 16),
-                    _buildDatePickers(),
-                    const SizedBox(height: 16),
-                    _selectedImageBytes != null
-                        ? Padding(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: 16,
-                              vertical: 0,
-                            ),
-                            child: Container(
-                              decoration: BoxDecoration(
-                                color: Colors.white,
-                                borderRadius: BorderRadius.circular(
-                                  AppConstants.radiusSmall,
-                                ),
-                                border: Border.all(
-                                  color: AppConstants.secondaryColor
-                                      .withOpacity(0.2),
-                                  width: 1,
-                                ),
-                                boxShadow: [
-                                  BoxShadow(
-                                    color: Colors.black.withOpacity(0.1),
-                                    blurRadius: 8,
-                                    offset: const Offset(0, 2),
-                                  ),
-                                ],
-                              ),
-                              padding: EdgeInsets.symmetric(
-                                horizontal: 16,
-                                vertical: 12,
-                              ),
-                              child: Row(
-                                children: [
-                                  Container(
-                                    width: 80,
-                                    height: 80,
-                                    decoration: BoxDecoration(
-                                      borderRadius: BorderRadius.circular(12),
-                                      border: Border.all(
-                                        color: AppConstants.secondaryColor
-                                            .withOpacity(0.2),
-                                        width: 1,
-                                      ),
-                                    ),
-                                    child: ClipRRect(
-                                      borderRadius: BorderRadius.circular(11),
-                                      child: Image.memory(
-                                        _selectedImageBytes!,
-                                        width: 80,
-                                        height: 80,
-                                        fit: BoxFit.cover,
-                                      ),
-                                    ),
-                                  ),
-                                  const Spacer(),
-                                  Row(
-                                    mainAxisSize: MainAxisSize.min,
-                                    children: [
-                                      ElevatedButton.icon(
-                                        onPressed: _showImagePicker,
-                                        icon: const Icon(Icons.edit, size: 16),
-                                        label: const Text('Change Logo'),
-                                        style: ElevatedButton.styleFrom(
-                                          shape: RoundedRectangleBorder(
-                                            borderRadius: BorderRadius.circular(
-                                              AppConstants.radiusSmall,
-                                            ),
-                                          ),
-                                          backgroundColor: const Color(
-                                            0xffEDE8FF,
-                                          ),
-                                          foregroundColor:
-                                              AppConstants.primaryColor,
-                                        ),
-                                      ),
-                                      const SizedBox(width: 8),
-                                      IconButton(
-                                        onPressed: () {
-                                          setState(() {
-                                            _selectedImage = null;
-                                            _selectedImageBytes = null;
-                                          });
-                                        },
-                                        icon: const Icon(Icons.delete_outline),
-                                        color: Colors.red,
-                                        tooltip: 'Delete image',
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            ),
-                          )
-                        : _buildImageSection(),
-                    const SizedBox(height: 32),
-                    _buildSaveButton(),
-                    const SizedBox(height: 32),
                   ],
                 ),
+              )
+            : Column(
+                children: [
+                  _buildHeader(),
+                  Expanded(
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.all(AppConstants.paddingMedium),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildCategorySelection(),
+                           const SizedBox(height: 16),
+                          _buildProjectSelection(),
+                          const SizedBox(height: 24),
+                          CustomInputField(
+                            controller: _taskNameController,
+                            label: 'Task Name',
+                            hint: 'Enter task name',
+                          ),
+
+                          const SizedBox(height: 16),
+                          _buildDescriptionField(),
+                          const SizedBox(height: 16),
+                          _buildDatePickers(),
+                          const SizedBox(height: 16),
+                          _selectedImageBytes != null
+                              ? _buildImagePreview()
+                              : _buildImageSection(),
+                          const SizedBox(height: 32),
+                          _buildSaveButton(),
+                          const SizedBox(height: 32),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
               ),
-            ),
-          ],
-        ),
       ),
     );
   }
@@ -438,8 +603,19 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
   }
 
   Widget _buildCategorySelection() {
+    if (_isLoadingTaskGroups) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: CircularProgressIndicator(
+            color: AppConstants.primaryColor,
+          ),
+        ),
+      );
+    }
+
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 0),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -447,11 +623,65 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
             label: 'Task Group',
             items: _categories,
             itemIcons: _categoryIcons,
-            selectedItem: _categories[_selectedCategoryIndex],
-            prefixIcon: _categoryIcons[_selectedCategoryIndex],
+            selectedItem: _categories.isNotEmpty
+                ? _categories[_selectedCategoryIndex]
+                : null,
+            prefixIcon: _categoryIcons.isNotEmpty
+                ? _categoryIcons[_selectedCategoryIndex]
+                : Icons.work,
             onChanged: (value) {
               setState(() {
                 _selectedCategoryIndex = _categories.indexOf(value!);
+              });
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProjectSelection() {
+    if (_isLoadingProjects) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(16),
+          child: CircularProgressIndicator(
+            color: AppConstants.primaryColor,
+          ),
+        ),
+      );
+    }
+
+    final displayProjects = [
+      ..._projects,
+      {'title': 'Add New Project', 'slug': _addNewProjectSlug},
+    ];
+    final displayTitles = displayProjects.map((p) => p['title']?.toString() ?? '').toList();
+    final displayIcons = List.generate(displayProjects.length, (i) => Icons.folder);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          CustomDropdown(
+            label: 'Project',
+            items: displayTitles,
+            itemIcons: displayIcons,
+            selectedItem: displayTitles.isNotEmpty
+                ? displayTitles[_selectedProjectIndex.clamp(0, displayTitles.length - 1)]
+                : null,
+            prefixIcon: displayIcons.isNotEmpty
+                ? displayIcons[_selectedProjectIndex.clamp(0, displayIcons.length - 1)]
+                : Icons.folder,
+            onChanged: (value) {
+              final index = displayTitles.indexOf(value!);
+              if (index >= 0 && displayProjects[index]['slug'] == _addNewProjectSlug) {
+                _showAddProjectDialog();
+                return;
+              }
+              setState(() {
+                _selectedProjectIndex = index;
               });
             },
           ),
@@ -494,7 +724,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
     required VoidCallback onTap,
   }) {
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 0),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
       child: GestureDetector(
         onTap: onTap,
         child: Container(
@@ -516,7 +746,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
           ),
           child: Row(
             children: [
-              Icon(
+              const Icon(
                 Icons.calendar_today_outlined,
                 color: AppConstants.primaryColor,
                 size: 24,
@@ -528,7 +758,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                   children: [
                     Text(
                       label,
-                      style: TextStyle(
+                      style: const TextStyle(
                         fontSize: 11,
                         color: AppConstants.secondaryColor,
                         fontWeight: FontWeight.w600,
@@ -548,7 +778,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
                   ],
                 ),
               ),
-              Icon(
+              const Icon(
                 Icons.arrow_drop_down_rounded,
                 color: AppConstants.blackColor,
                 size: 32,
@@ -560,11 +790,91 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
     );
   }
 
+  Widget _buildImagePreview() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(AppConstants.radiusSmall),
+          border: Border.all(
+            color: AppConstants.secondaryColor.withOpacity(0.2),
+            width: 1,
+          ),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withOpacity(0.1),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        child: Row(
+          children: [
+            Container(
+              width: 80,
+              height: 80,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(
+                  color: AppConstants.secondaryColor.withOpacity(0.2),
+                  width: 1,
+                ),
+              ),
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(11),
+                child: Image.memory(
+                  _selectedImageBytes!,
+                  width: 80,
+                  height: 80,
+                  fit: BoxFit.cover,
+                ),
+              ),
+            ),
+            const Spacer(),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                ElevatedButton.icon(
+                  onPressed: _showImagePicker,
+                  icon: const Icon(Icons.edit, size: 16),
+                  label: const Text('Change Logo'),
+                  style: ElevatedButton.styleFrom(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(
+                        AppConstants.radiusSmall,
+                      ),
+                    ),
+                    backgroundColor: const Color(0xffEDE8FF),
+                    foregroundColor: AppConstants.primaryColor,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                IconButton(
+                  onPressed: () {
+                    setState(() {
+                      _selectedImage = null;
+                      _selectedImageBytes = null;
+                    });
+                  },
+                  icon: const Icon(Icons.delete_outline),
+                  color: Colors.red,
+                  tooltip: 'Delete image',
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildImageSection() {
     return Container(
-      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 0),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
       child: Container(
-        padding: EdgeInsets.symmetric(horizontal: 16, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(AppConstants.radiusSmall),
@@ -594,7 +904,7 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
             const SizedBox(height: 8),
             GestureDetector(
               onTap: _showImagePicker,
-              child: Container(
+              child: SizedBox(
                 width: double.infinity,
                 child: Column(
                   children: [
@@ -632,12 +942,12 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
 
   Widget _buildSaveButton() {
     return Padding(
-      padding: EdgeInsets.symmetric(horizontal: 16, vertical: 0),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
       child: SizedBox(
         width: double.infinity,
         height: 56,
         child: ElevatedButton(
-          onPressed: _saveTask,
+          onPressed: _isSaving ? null : _saveTask,
           style: ElevatedButton.styleFrom(
             backgroundColor: AppConstants.primaryColor,
             foregroundColor: Colors.white,
@@ -645,11 +955,21 @@ class _AddTaskScreenState extends State<AddTaskScreen> {
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(AppConstants.radiusMedium),
             ),
+            disabledBackgroundColor: AppConstants.primaryColor.withOpacity(0.5),
           ),
-          child: const Text(
-            'Save Task',
-            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
-          ),
+          child: _isSaving
+              ? const SizedBox(
+                  width: 24,
+                  height: 24,
+                  child: CircularProgressIndicator(
+                    color: Colors.white,
+                    strokeWidth: 2,
+                  ),
+                )
+              : const Text(
+                  'Save Task',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+                ),
         ),
       ),
     );

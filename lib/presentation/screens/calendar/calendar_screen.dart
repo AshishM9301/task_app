@@ -1,5 +1,9 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../../core/constants/app_constants.dart';
+import '../../../data/models/task.dart';
+import '../../../data/utils/api_service.dart';
+import '../../../providers/guest_provider.dart';
 import '../tasks/task_detail_screen.dart';
 
 class CalendarScreen extends StatefulWidget {
@@ -19,86 +23,92 @@ class CalendarScreen extends StatefulWidget {
 }
 
 class _CalendarScreenState extends State<CalendarScreen> {
+  final ApiService _apiService = ApiService();
   int _selectedCategoryIndex = 0;
+  DateTime _selectedDate = DateTime.now();
 
   final List<String> _categories = ['All', 'Todo', 'In Progress'];
 
-  final List<Map<String, dynamic>> _tasks = [
-    {
-      'title': 'Design UI Mockups',
-      'time': '10:00 AM',
-      'taskGroup': 'Work',
-      'dueDate': '2026-03-22',
-      'category': 'Todo',
-      'color': const Color(0xFF10B981),
-      'categoryColor': const Color(0xFF3B82F6),
-      'projectName': 'Work',
-      'projectIcon': Icons.work,
-      'taskStarted': true,
-      'isSharedWithTeam': true,
-      'sharedWithUsers': ['John Doe', 'Jane Smith'],
-      'description': 'Design UI Mockups for the new project',
-    },
-    {
-      'title': 'Team Meeting',
-      'time': '2:00 PM',
-      'taskGroup': 'Personal',
-      'category': 'In Progress',
-      'color': const Color(0xFFF59E0B),
-      'categoryColor': const Color(0xFFF59E0B),
-      'projectName': 'Personal',
-      'projectIcon': Icons.person,
-      'startTime': '2026-03-22',
-      'endTime': '2026-03-25',
-      'taskStarted': false,
-      'sharedWithUsers': ['Alice Johnson'],
-      'description': 'Team Meeting with the team',
-    },
-    {
-      'title': 'Code Review',
-      'time': '4:30 PM',
-      'category': 'Todo',
-      'color': const Color(0xFF3B82F6),
-      'categoryColor': const Color(0xFF3B82F6),
-      'projectName': 'Study',
-      'projectIcon': Icons.school,
-      'taskStarted': false,
-      'description': 'Code Review for the new project',
-    },
-    {
-      'title': 'API Integration',
-      'time': '5:00 PM',
-      'category': 'In Progress',
-      'color': const Color(0xFF8B5CF6),
-      'categoryColor': const Color(0xFFF59E0B),
-      'projectName': 'Work',
-      'projectIcon': Icons.work,
-      'taskStarted': false,
-      'sharedWithUsers': ['Bob Wilson', 'Carol White', 'David Brown'],
-      'description': 'API Integration for the new project',
-    },
-    {
-      'title': 'Write Documentation',
-      'time': '6:00 PM',
-      'category': 'Todo',
-      'color': const Color(0xFFEF4444),
-      'categoryColor': const Color(0xFF3B82F6),
-      'projectName': 'Personal',
-      'projectIcon': Icons.person,
-      'taskStarted': false,
-      'description': 'Write Documentation for the new project',
-    },
-  ];
+  List<Task> _tasks = [];
+  bool _isLoading = true;
+  String? _error;
 
-  List<Map<String, dynamic>> _getFilteredTasks() {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _fetchTasks();
+    });
+  }
+
+  Future<void> _fetchTasks() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final guestProvider = context.read<GuestProvider>();
+      if (!guestProvider.hasGuestKey) {
+        await guestProvider.initializeGuestKey();
+        if (!guestProvider.hasGuestKey) {
+          setState(() {
+            _error = 'Failed to initialize guest key';
+            _isLoading = false;
+          });
+          return;
+        }
+      }
+      _apiService.setGuestKey(guestProvider.guestKey!);
+      final response = await _apiService.getTasksByDate(
+        date: _selectedDate.toIso8601String().split('T')[0],
+      );
+
+
+      if (response.success && response.data != null) {
+        final tasksData = response.data! as List<dynamic>;
+        setState(() {
+          _tasks = tasksData
+              .map((json) => Task.fromApiJson(json as Map<String, dynamic>))
+              .toList();
+          _isLoading = false;
+        });
+      } else {
+        print('error: ${response.message}');
+        setState(() {
+          _error = response.message;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      print('error: $e');
+      setState(() {
+        _error = e.toString();
+        _isLoading = false;
+      });
+    }
+  }
+
+  List<Task> _getFilteredTasks() {
     if (_selectedCategoryIndex == 0) {
       return _tasks;
     }
-    return _tasks
-        .where(
-          (task) => task['category'] == _categories[_selectedCategoryIndex],
-        )
-        .toList();
+
+    final statusMap = {
+      1: 'pending',
+      2: 'in_progress',
+    };
+
+    final status = statusMap[_selectedCategoryIndex] ?? 'all';
+    return _tasks.where((task) => task.status == status).toList();
+  }
+
+  void _selectDate(int daysFromToday) {
+    final newDate = DateTime.now().add(Duration(days: daysFromToday));
+    setState(() {
+      _selectedDate = newDate;
+    });
+    _fetchTasks();
   }
 
   @override
@@ -110,17 +120,22 @@ class _CalendarScreenState extends State<CalendarScreen> {
           children: [
             _buildHeader(),
             Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(AppConstants.paddingMedium),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildDaysCard(),
-                    const SizedBox(height: 24),
-                    _buildCategoryChips(),
-                    const SizedBox(height: 24),
-                    _buildTasksList(),
-                  ],
+              child: RefreshIndicator(
+                onRefresh: _fetchTasks,
+                color: AppConstants.primaryColor,
+                child: SingleChildScrollView(
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: const EdgeInsets.all(AppConstants.paddingMedium),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildDaysCard(),
+                      const SizedBox(height: 24),
+                      _buildCategoryChips(),
+                      const SizedBox(height: 24),
+                      _buildTasksList(),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -203,18 +218,8 @@ class _CalendarScreenState extends State<CalendarScreen> {
     final now = DateTime.now();
     final dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
     final monthNames = [
-      'Jan',
-      'Feb',
-      'Mar',
-      'Apr',
-      'May',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Oct',
-      'Nov',
-      'Dec',
+      'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec',
     ];
 
     final List<Map<String, dynamic>> days = [];
@@ -228,6 +233,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
             date.day == now.day &&
             date.month == now.month &&
             date.year == now.year,
+        'offset': i,
       });
     }
 
@@ -240,62 +246,66 @@ class _CalendarScreenState extends State<CalendarScreen> {
         itemBuilder: (context, index) {
           final dayData = days[index];
           final isToday = dayData['isToday'] as bool;
+          final offset = dayData['offset'] as int;
 
-          return Container(
-            width: 70,
-            margin: EdgeInsets.only(
-              left: index == 0 ? 0 : 8,
-              right: index == days.length - 1 ? 0 : 0,
-            ),
-            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
-            decoration: BoxDecoration(
-              color: isToday ? AppConstants.primaryColor : Colors.white,
-              borderRadius: BorderRadius.circular(AppConstants.radiusMedium),
-              boxShadow: [
-                BoxShadow(
-                  color: isToday
-                      ? AppConstants.primaryColor.withOpacity(0.3)
-                      : Colors.black.withOpacity(0.05),
-                  blurRadius: 10,
-                  offset: const Offset(0, 4),
-                ),
-              ],
-            ),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Text(
-                  dayData['weekName'] as String,
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w500,
+          return GestureDetector(
+            onTap: () => _selectDate(offset),
+            child: Container(
+              width: 70,
+              margin: EdgeInsets.only(
+                left: index == 0 ? 0 : 8,
+                right: index == days.length - 1 ? 0 : 0,
+              ),
+              padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+              decoration: BoxDecoration(
+                color: isToday ? AppConstants.primaryColor : Colors.white,
+                borderRadius: BorderRadius.circular(AppConstants.radiusMedium),
+                boxShadow: [
+                  BoxShadow(
                     color: isToday
-                        ? AppConstants.whiteColor.withOpacity(0.8)
-                        : AppConstants.secondaryColor,
+                        ? AppConstants.primaryColor.withOpacity(0.3)
+                        : Colors.black.withOpacity(0.05),
+                    blurRadius: 10,
+                    offset: const Offset(0, 4),
                   ),
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  dayData['day'].toString(),
-                  style: TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.bold,
-                    color: isToday
-                        ? AppConstants.whiteColor
-                        : AppConstants.blackColor,
+                ],
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    dayData['weekName'] as String,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w500,
+                      color: isToday
+                          ? AppConstants.whiteColor.withOpacity(0.8)
+                          : AppConstants.secondaryColor,
+                    ),
                   ),
-                ),
-                const SizedBox(height: 4),
-                Text(
-                  dayData['month'] as String,
-                  style: TextStyle(
-                    fontSize: 10,
-                    color: isToday
-                        ? AppConstants.whiteColor.withOpacity(0.8)
-                        : AppConstants.secondaryColor,
+                  const SizedBox(height: 8),
+                  Text(
+                    dayData['day'].toString(),
+                    style: TextStyle(
+                      fontSize: 20,
+                      fontWeight: FontWeight.bold,
+                      color: isToday
+                          ? AppConstants.whiteColor
+                          : AppConstants.blackColor,
+                    ),
                   ),
-                ),
-              ],
+                  const SizedBox(height: 4),
+                  Text(
+                    dayData['month'] as String,
+                    style: TextStyle(
+                      fontSize: 10,
+                      color: isToday
+                          ? AppConstants.whiteColor.withOpacity(0.8)
+                          : AppConstants.secondaryColor,
+                    ),
+                  ),
+                ],
+              ),
             ),
           );
         },
@@ -358,7 +368,69 @@ class _CalendarScreenState extends State<CalendarScreen> {
   }
 
   Widget _buildTasksList() {
+    if (_isLoading) {
+      return const Center(
+        child: Padding(
+          padding: EdgeInsets.all(32),
+          child: CircularProgressIndicator(
+            color: AppConstants.primaryColor,
+          ),
+        ),
+      );
+    }
+
+    print('tasks: ${_error}');
+
+    if (_error != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            children: [
+              const Icon(Icons.error_outline, color: Colors.red, size: 48),
+              const SizedBox(height: 16),
+              Text(
+                _error!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Colors.red),
+              ),
+              const SizedBox(height: 16),
+              ElevatedButton(
+                onPressed: _fetchTasks,
+                child: const Text('Retry'),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
     final filteredTasks = _getFilteredTasks();
+
+    if (filteredTasks.isEmpty) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(32),
+          child: Column(
+            children: [
+              Icon(
+                Icons.task_alt,
+                size: 64,
+                color: AppConstants.secondaryColor.withOpacity(0.5),
+              ),
+              const SizedBox(height: 16),
+              const Text(
+                'No tasks for this day',
+                style: TextStyle(
+                  fontSize: 18,
+                  color: AppConstants.secondaryColor,
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -372,58 +444,23 @@ class _CalendarScreenState extends State<CalendarScreen> {
           ),
         ),
         const SizedBox(height: 16),
-        ...filteredTasks.map(
-          (task) => _buildTaskItem(
-            title: task['title'] as String,
-            time: task['time'] as String,
-            category: task['category'] as String,
-            color: task['color'] as Color,
-            categoryColor: task['categoryColor'] as Color,
-            projectName: task['projectName'] as String,
-            projectIcon: task['projectIcon'] as IconData,
-            onTap: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (context) => TaskDetailScreen(
-                    title: task['title'] as String,
-                    time: task['time'] as String,
-                    taskGroup: task['taskGroup'] as String?,
-                    description: task['description'] as String?,
-                    startTime: task['startTime'] as String?,
-                    endTime: task['endTime'] as String?,
-                    dueDate: task['dueDate'] as String?,
-                    category: task['category'] as String,
-                    categoryColor: task['categoryColor'] as Color,
-                    projectName: task['projectName'] as String,
-                    projectIcon: task['projectIcon'] as IconData,
-                    projectColor: task['color'] as Color,
-                    taskStarted: task['taskStarted'] as bool?,
-                    isSharedWithTeam: task['isSharedWithTeam'] as bool?,
-                    sharedWithUsers: task['sharedWithUsers'] != null
-                        ? List<String>.from(task['sharedWithUsers'] as List)
-                        : null,
-                  ),
-                ),
-              );
-            },
-          ),
-        ),
+        ...filteredTasks.map((task) => _buildTaskItem(task: task)),
       ],
     );
   }
 
-  Widget _buildTaskItem({
-    required String title,
-    required String time,
-    required String category,
-    required Color color,
-    required Color categoryColor,
-    String projectName = 'Work',
-    IconData projectIcon = Icons.work,
-    VoidCallback? onTap,
-  }) {
+  Widget _buildTaskItem({required Task task}) {
+    final status = task.status;
+    final statusColor = _getStatusColor(status);
+
     return GestureDetector(
-      onTap: onTap,
+      onTap: () {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (context) => TaskDetailScreen(task: task),
+          ),
+        );
+      },
       child: Container(
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.all(16),
@@ -445,7 +482,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
                 Text(
-                  projectName,
+                  task.projectTitle ?? 'No Project',
                   style: const TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w600,
@@ -456,14 +493,17 @@ class _CalendarScreenState extends State<CalendarScreen> {
                   width: 32,
                   height: 32,
                   decoration: BoxDecoration(
-                    color: color.withOpacity(0.1),
+                    color: statusColor.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(8),
                   ),
-                  child: Icon(projectIcon, color: color, size: 18),
+                  child: Icon(
+                    _getStatusIcon(status),
+                    color: statusColor,
+                    size: 18,
+                  ),
                 ),
               ],
             ),
-
             Row(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
@@ -472,7 +512,7 @@ class _CalendarScreenState extends State<CalendarScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        title,
+                        task.title,
                         style: const TextStyle(
                           fontSize: 15,
                           fontWeight: FontWeight.w600,
@@ -482,14 +522,14 @@ class _CalendarScreenState extends State<CalendarScreen> {
                       const SizedBox(height: 12),
                       Row(
                         children: [
-                          Icon(
+                          const Icon(
                             Icons.access_time,
                             size: 14,
                             color: AppConstants.secondaryColor,
                           ),
                           const SizedBox(width: 4),
                           Text(
-                            time,
+                            _formatTime(task.endedAt),
                             style: const TextStyle(
                               fontSize: 12,
                               color: AppConstants.secondaryColor,
@@ -506,15 +546,15 @@ class _CalendarScreenState extends State<CalendarScreen> {
                     vertical: 4,
                   ),
                   decoration: BoxDecoration(
-                    color: categoryColor.withOpacity(0.1),
+                    color: statusColor.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
-                    category,
+                    _formatStatus(status),
                     style: TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w600,
-                      color: categoryColor,
+                      color: statusColor,
                     ),
                   ),
                 ),
@@ -526,14 +566,50 @@ class _CalendarScreenState extends State<CalendarScreen> {
     );
   }
 
-  IconData _getCategoryIcon(String category) {
-    switch (category) {
-      case 'Todo':
-        return Icons.radio_button_unchecked;
-      case 'In Progress':
-        return Icons.timelapse;
+  Color _getStatusColor(String status) {
+    switch (status) {
+      case 'completed':
+        return const Color(0xFF10B981);
+      case 'in_progress':
+        return const Color(0xFFF59E0B);
+      case 'pending':
       default:
-        return Icons.task_alt;
+        return const Color(0xFF3B82F6);
+    }
+  }
+
+  IconData _getStatusIcon(String status) {
+    switch (status) {
+      case 'completed':
+        return Icons.check_circle;
+      case 'in_progress':
+        return Icons.timelapse;
+      case 'pending':
+      default:
+        return Icons.radio_button_unchecked;
+    }
+  }
+
+  String _formatStatus(String status) {
+    switch (status) {
+      case 'completed':
+        return 'Completed';
+      case 'in_progress':
+        return 'In Progress';
+      case 'pending':
+      default:
+        return 'Todo';
+    }
+  }
+
+  String _formatTime(DateTime? date) {
+    if (date == null) return 'No deadline';
+    try {
+      final hour = date.hour > 12 ? date.hour - 12 : (date.hour == 0 ? 12 : date.hour);
+      final period = date.hour >= 12 ? 'PM' : 'AM';
+      return '$hour:${date.minute.toString().padLeft(2, '0')} $period';
+    } catch (_) {
+      return 'Invalid';
     }
   }
 }

@@ -1,44 +1,153 @@
 import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
 import '../../../core/constants/app_constants.dart';
 import '../../../data/models/user.dart';
+import '../../../data/utils/api_service.dart';
+import '../../../providers/guest_provider.dart';
 import '../../widgets/custom_circular_progress.dart';
 
-class HomeScreen extends StatelessWidget {
+class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
 
   @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  final ApiService _apiService = ApiService();
+  User? _user;
+  bool _isLoading = true;
+  String? _error;
+
+  // Dashboard data
+  int _totalTasks = 0;
+  int _completedTasks = 0;
+  int _inProgressTasks = 0;
+  int _pendingTasks = 0;
+  int _completedPercentage = 0;
+  int _inProgressPercentage = 0;
+  int _pendingPercentage = 0;
+  List<dynamic> _inProgressTasksList = [];
+  List<dynamic> _taskGroups = [];
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _initializeAndFetch();
+    });
+  }
+
+  Future<void> _initializeAndFetch() async {
+    final guestProvider = context.read<GuestProvider>();
+    
+    try {
+      await guestProvider.initializeGuestKey();
+    } catch (e) {
+      // Continue even if guest key fails - guest key is optional for viewing
+      debugPrint('Guest key initialization failed: $e');
+    }
+    
+    if (guestProvider.hasGuestKey) {
+      _apiService.setGuestKey(guestProvider.guestKey!);
+    }
+    
+    // Always try to fetch dashboard - guest key is optional
+    await _fetchDashboard();
+  }
+
+  Future<void> _fetchDashboard() async {
+    setState(() {
+      _isLoading = true;
+      _error = null;
+    });
+
+    try {
+      final response = await _apiService.getDashboard();
+      if (response.success && response.data != null) {
+        final data = response.data!;
+        final overview = data['overview'] ?? {};
+
+        setState(() {
+          _totalTasks = overview['totalTasks'] ?? 0;
+          _completedTasks = overview['completedTasks'] ?? 0;
+          _inProgressTasks = overview['inProgressTasks'] ?? 0;
+          _pendingTasks = overview['pendingTasks'] ?? 0;
+          _completedPercentage = overview['completedPercentage'] ?? 0;
+          _inProgressPercentage = overview['inProgressPercentage'] ?? 0;
+          _pendingPercentage = overview['pendingPercentage'] ?? 0;
+          _inProgressTasksList = data['inProgressTasks'] ?? [];
+          _taskGroups = data['taskGroups'] ?? [];
+          _isLoading = false;
+        });
+      } else {
+        setState(() {
+          _error = response.message;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _error = e.toString();
+        _isLoading = false;
+      });
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final user = User(
-      id: '1',
-      name: 'John',
-      email: 'john@example.com',
-      avatarUrl: null,
-    );
+    final guestProvider = context.watch<GuestProvider>();
+
+    if (guestProvider.isLoading) {
+      return const Scaffold(
+        backgroundColor: AppConstants.whiteColor,
+        body: Center(
+          child: CircularProgressIndicator(color: AppConstants.primaryColor),
+        ),
+      );
+    }
 
     return Scaffold(
       backgroundColor: AppConstants.whiteColor,
       body: SafeArea(
-        child: SingleChildScrollView(
-          padding: const EdgeInsets.all(AppConstants.paddingMedium),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildHeader(user),
-              const SizedBox(height: 24),
-
-              _buildProgressCard(),
-              const SizedBox(height: 24),
-              _buildInProgressTasks(),
-              const SizedBox(height: 24),
-              _buildTaskGroups(),
-            ],
+        child: RefreshIndicator(
+          onRefresh: _fetchDashboard,
+          color: AppConstants.primaryColor,
+          child: SingleChildScrollView(
+            physics: const AlwaysScrollableScrollPhysics(),
+            padding: const EdgeInsets.all(AppConstants.paddingMedium),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                _buildHeader(guestProvider.guestKey ?? ''),
+                const SizedBox(height: 24),
+                if (_isLoading)
+                  const Center(
+                    child: Padding(
+                      padding: EdgeInsets.all(32),
+                      child: CircularProgressIndicator(
+                        color: AppConstants.primaryColor,
+                      ),
+                    ),
+                  )
+                else if (_error != null)
+                  _buildErrorWidget()
+                else ...[
+                  _buildProgressCard(),
+                  const SizedBox(height: 24),
+                  _buildInProgressTasks(),
+                  const SizedBox(height: 24),
+                  _buildTaskGroups(),
+                ],
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 
-  Widget _buildHeader(User user) {
+  Widget _buildHeader(String guestKey) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
@@ -61,16 +170,16 @@ class HomeScreen extends StatelessWidget {
             Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
+                const Text(
                   'Hello,',
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 14,
                     fontWeight: FontWeight.w500,
                     color: AppConstants.secondaryColor,
                   ),
                 ),
                 Text(
-                  user.name,
+                  guestKey.isNotEmpty ? 'Guest' : 'User',
                   style: const TextStyle(
                     fontSize: 22,
                     fontWeight: FontWeight.bold,
@@ -82,7 +191,7 @@ class HomeScreen extends StatelessWidget {
           ],
         ),
         IconButton(
-          onPressed: () {},
+          onPressed: _fetchDashboard,
           icon: const Icon(Icons.notifications),
           color: AppConstants.blackColor,
         ),
@@ -90,67 +199,36 @@ class HomeScreen extends StatelessWidget {
     );
   }
 
-  Widget _buildDateSection() {
-    final now = DateTime.now();
-    final dayNames = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
-    final monthNames = [
-      'January',
-      'February',
-      'March',
-      'April',
-      'May',
-      'June',
-      'July',
-      'August',
-      'September',
-      'October',
-      'November',
-      'December',
-    ];
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text(
-          '${dayNames[now.weekday - 1]}, ${monthNames[now.month - 1]} ${now.day}',
-          style: const TextStyle(
-            fontSize: 16,
-            fontWeight: FontWeight.w600,
-            color: AppConstants.blackColor,
-          ),
+  Widget _buildErrorWidget() {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          children: [
+            const Icon(
+              Icons.error_outline,
+              color: Colors.red,
+              size: 48,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              _error ?? 'An error occurred',
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: Colors.red),
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: _fetchDashboard,
+              child: const Text('Retry'),
+            ),
+          ],
         ),
-        const SizedBox(height: 4),
-        Text(
-          _getOrdinalSuffix(now.day),
-          style: const TextStyle(
-            fontSize: 14,
-            color: AppConstants.secondaryColor,
-          ),
-        ),
-      ],
+      ),
     );
   }
 
-  String _getOrdinalSuffix(int day) {
-    if (day >= 11 && day <= 13) return '${day}th';
-    switch (day % 10) {
-      case 1:
-        return '${day}st';
-      case 2:
-        return '${day}nd';
-      case 3:
-        return '${day}rd';
-      default:
-        return '${day}th';
-    }
-  }
-
   Widget _buildProgressCard() {
-    final completed = 12;
-    final inProgress = 5;
-    final pending = 3;
-    final total = completed + inProgress + pending;
-    final progressPercent = total > 0 ? (completed / total * 100).round() : 0;
+    final progressPercent = _completedPercentage.toDouble();
 
     return Stack(
       children: [
@@ -182,7 +260,6 @@ class HomeScreen extends StatelessWidget {
                   children: [
                     _buildTaskTitle(),
                     const SizedBox(height: 16),
-
                     ElevatedButton(
                       onPressed: () {},
                       style: ElevatedButton.styleFrom(
@@ -199,7 +276,7 @@ class HomeScreen extends StatelessWidget {
               ),
               const SizedBox(width: 20),
               CustomCircularProgress(
-                progressPercent: progressPercent.toDouble(),
+                progressPercent: progressPercent,
                 size: 100,
                 strokeWidth: 10,
                 progressColor: AppConstants.whiteColor,
@@ -257,36 +334,41 @@ class HomeScreen extends StatelessWidget {
   }
 
   Widget _buildInProgressTasks() {
-    final tasks = [
-      {
-        'title': 'Design UI Mockups',
-        'time': '10:00 AM',
-        'category': 'Design',
-        'color': const Color(0xFF10B981),
-        'progress': 0.65,
-      },
-      {
-        'title': 'Team Meeting',
-        'time': '2:00 PM',
-        'category': 'Meeting',
-        'color': const Color(0xFFF59E0B),
-        'progress': 0.40,
-      },
-      {
-        'title': 'Code Review',
-        'time': '4:30 PM',
-        'category': 'Development',
-        'color': const Color(0xFF3B82F6),
-        'progress': 0.80,
-      },
-      {
-        'title': 'API Integration',
-        'time': '5:00 PM',
-        'category': 'Development',
-        'color': const Color(0xFF8B5CF6),
-        'progress': 0.55,
-      },
-    ];
+    if (_inProgressTasksList.isEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'In Progress',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: AppConstants.blackColor,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                children: [
+                  Icon(
+                    Icons.check_circle_outline,
+                    size: 48,
+                    color: AppConstants.secondaryColor.withOpacity(0.5),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'No tasks in progress',
+                    style: TextStyle(color: AppConstants.secondaryColor),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      );
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -310,9 +392,12 @@ class HomeScreen extends StatelessWidget {
                 shape: BoxShape.circle,
               ),
               child: Center(
-                child: const Text(
-                  '6',
-                  style: TextStyle(color: AppConstants.primaryColor),
+                child: Text(
+                  '${_inProgressTasksList.length}',
+                  style: const TextStyle(
+                    color: AppConstants.primaryColor,
+                    fontSize: 12,
+                  ),
                 ),
               ),
             ),
@@ -325,18 +410,17 @@ class HomeScreen extends StatelessWidget {
             scrollDirection: Axis.horizontal,
             physics: const BouncingScrollPhysics(),
             child: Row(
-              children: tasks.map((task) {
+              children: _inProgressTasksList.take(10).map((task) {
                 return Padding(
-                  padding: EdgeInsets.only(
-                    right: 12,
-                    left: task == tasks.first ? 0 : 0,
-                  ),
+                  padding: const EdgeInsets.only(right: 12),
                   child: _buildInProgressCard(
-                    title: task['title'] as String,
-                    time: task['time'] as String,
-                    category: task['category'] as String,
-                    color: task['color'] as Color,
-                    progress: task['progress'] as double,
+                    title: task['title'] ?? 'Untitled',
+                    time: task['ended_at'] != null
+                        ? _formatDateTime(task['ended_at'])
+                        : 'No deadline',
+                    category: task['project_title'] ?? 'General',
+                    color: AppConstants.primaryColor,
+                    progress: 0.5,
                   ),
                 );
               }).toList(),
@@ -345,6 +429,18 @@ class HomeScreen extends StatelessWidget {
         ),
       ],
     );
+  }
+
+  String _formatDateTime(String? dateStr) {
+    if (dateStr == null) return '';
+    try {
+      final date = DateTime.parse(dateStr);
+      final hour = date.hour > 12 ? date.hour - 12 : date.hour;
+      final period = date.hour >= 12 ? 'PM' : 'AM';
+      return '$hour:${date.minute.toString().padLeft(2, '0')} $period';
+    } catch (_) {
+      return dateStr;
+    }
   }
 
   Widget _buildInProgressCard({
@@ -381,6 +477,8 @@ class HomeScreen extends StatelessWidget {
                   fontWeight: FontWeight.w600,
                   color: AppConstants.blackColor.withOpacity(0.5),
                 ),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
               ),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
@@ -403,7 +501,7 @@ class HomeScreen extends StatelessWidget {
             maxLines: 2,
             overflow: TextOverflow.ellipsis,
           ),
-          Spacer(),
+          const Spacer(),
           ClipRRect(
             borderRadius: BorderRadius.circular(4),
             child: LinearProgressIndicator(
@@ -466,7 +564,7 @@ class HomeScreen extends StatelessWidget {
                 const SizedBox(height: 4),
                 Row(
                   children: [
-                    Icon(
+                    const Icon(
                       Icons.access_time,
                       size: 14,
                       color: AppConstants.secondaryColor,
@@ -517,12 +615,12 @@ class HomeScreen extends StatelessWidget {
   }
 
   IconData _getCategoryIcon(String category) {
-    switch (category) {
-      case 'Design':
+    switch (category.toLowerCase()) {
+      case 'design':
         return Icons.brush_outlined;
-      case 'Meeting':
+      case 'meeting':
         return Icons.people_outline;
-      case 'Development':
+      case 'development':
         return Icons.code_outlined;
       default:
         return Icons.task_alt;
@@ -530,14 +628,13 @@ class HomeScreen extends StatelessWidget {
   }
 
   Widget _buildTaskTitle() {
-    final completed = 12;
-    final inProgress = 5;
-    final pending = 3;
-    final total = completed + inProgress + pending;
-    final progress = total > 0 ? completed / total : 0.0;
+    final total = _totalTasks;
+    final progress = total > 0 ? _completedTasks / total : 0.0;
 
     String message;
-    if (progress == 0) {
+    if (total == 0) {
+      message = "Let's get started! Create your first task.";
+    } else if (progress == 0) {
       message = "Let's get started! You have tasks to complete today.";
     } else if (progress < 0.25) {
       message = "Great start! Keep going with your tasks.";
@@ -562,36 +659,41 @@ class HomeScreen extends StatelessWidget {
   }
 
   Widget _buildTaskGroups() {
-    final taskGroups = [
-      {
-        'name': 'Work',
-        'totalTasks': 12,
-        'completedTasks': 8,
-        'color': const Color(0xFF3B82F6),
-        'icon': Icons.work,
-      },
-      {
-        'name': 'Personal',
-        'totalTasks': 8,
-        'completedTasks': 5,
-        'color': const Color(0xFF10B981),
-        'icon': Icons.person,
-      },
-      {
-        'name': 'Shopping',
-        'totalTasks': 6,
-        'completedTasks': 2,
-        'color': const Color(0xFFF59E0B),
-        'icon': Icons.shopping_bag,
-      },
-      {
-        'name': 'Health',
-        'totalTasks': 4,
-        'completedTasks': 4,
-        'color': const Color(0xFFEF4444),
-        'icon': Icons.health_and_safety,
-      },
-    ];
+    if (_taskGroups.isEmpty) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Task Groups',
+            style: TextStyle(
+              fontSize: 18,
+              fontWeight: FontWeight.bold,
+              color: AppConstants.blackColor,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Center(
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                children: [
+                  Icon(
+                    Icons.folder_outlined,
+                    size: 48,
+                    color: AppConstants.secondaryColor.withOpacity(0.5),
+                  ),
+                  const SizedBox(height: 8),
+                  const Text(
+                    'No task groups yet',
+                    style: TextStyle(color: AppConstants.secondaryColor),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      );
+    }
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -605,17 +707,30 @@ class HomeScreen extends StatelessWidget {
           ),
         ),
         const SizedBox(height: 16),
-        ...taskGroups.map(
-          (group) => _buildTaskGroupItem(
-            name: group['name'] as String,
-            totalTasks: group['totalTasks'] as int,
-            completedTasks: group['completedTasks'] as int,
-            color: group['color'] as Color,
-            icon: group['icon'] as IconData,
-          ),
-        ),
+        ..._taskGroups.map((group) {
+          final color = _getGroupColor(_taskGroups.indexOf(group));
+          return _buildTaskGroupItem(
+            name: group['title'] ?? 'Untitled',
+            totalTasks: group['totalTasks'] ?? 0,
+            completedTasks: group['completedTasks'] ?? 0,
+            color: color,
+            icon: _getCategoryIcon(group['title'] ?? ''),
+          );
+        }),
       ],
     );
+  }
+
+  Color _getGroupColor(int index) {
+    final colors = [
+      const Color(0xFF3B82F6),
+      const Color(0xFF10B981),
+      const Color(0xFFF59E0B),
+      const Color(0xFFEF4444),
+      const Color(0xFF8B5CF6),
+      const Color(0xFFEC4899),
+    ];
+    return colors[index % colors.length];
   }
 
   Widget _buildTaskGroupItem({
@@ -652,7 +767,6 @@ class HomeScreen extends StatelessWidget {
             ),
             child: Icon(icon, color: color, size: 24),
           ),
-
           const SizedBox(width: 16),
           Expanded(
             child: Column(

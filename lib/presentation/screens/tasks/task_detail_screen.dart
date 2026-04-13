@@ -1,57 +1,22 @@
 import 'package:flutter/material.dart';
-
+import 'package:provider/provider.dart';
 import '../../../core/constants/app_constants.dart';
+import '../../../data/models/task.dart';
+import '../../../data/utils/api_service.dart';
+import '../../../providers/guest_provider.dart';
 
 class TaskDetailScreen extends StatefulWidget {
   final IconData? backButtonIcon;
   final bool hasNotification;
   final VoidCallback? onBackPressed;
-
-  // Task details
-  final String? title;
-  final String? time;
-  final String? category;
-  final Color? categoryColor;
-  final String? projectName;
-  final IconData? projectIcon;
-  final Color? projectColor;
-
-  // New parameters
-  final String? taskGroup; // "Work" or "Personal"
-  final String? description; // Task description
-  final String? startTime;
-  final String? endTime;
-  final String? dueDate;
-  final bool? taskStarted; // false = show start/end date, true = show due date
-  final bool? isSharedWithTeam;
-  final String? createdBy;
-  final List<String>? sharedWithUsers;
-  final VoidCallback? onEdit;
-  final VoidCallback? onMarkComplete;
+  final Task task;
 
   const TaskDetailScreen({
     super.key,
     this.backButtonIcon,
     this.hasNotification = true,
     this.onBackPressed,
-    this.title,
-    this.time,
-    this.category,
-    this.categoryColor,
-    this.projectName,
-    this.projectIcon,
-    this.projectColor,
-    this.taskGroup,
-    this.description,
-    this.startTime,
-    this.endTime,
-    this.dueDate,
-    this.taskStarted,
-    this.isSharedWithTeam,
-    this.createdBy,
-    this.sharedWithUsers,
-    this.onEdit,
-    this.onMarkComplete,
+    required this.task,
   });
 
   @override
@@ -59,15 +24,110 @@ class TaskDetailScreen extends StatefulWidget {
 }
 
 class _TaskDetailScreenState extends State<TaskDetailScreen> {
-  IconData _getTaskGroupIcon() {
-    if (widget.taskGroup?.toLowerCase() == 'personal') {
-      return Icons.person;
+  final ApiService _apiService = ApiService();
+  bool _isUpdating = false;
+
+  Future<void> _markComplete() async {
+    if (_isUpdating) return;
+
+    final guestProvider = context.read<GuestProvider>();
+    if (!guestProvider.hasGuestKey) {
+      await guestProvider.initializeGuestKey();
     }
-    return Icons.work;
+    _apiService.setGuestKey(guestProvider.guestKey ?? '');
+
+    setState(() {
+      _isUpdating = true;
+    });
+
+    try {
+      final response = await _apiService.updateTaskStatus(
+        taskId: int.parse(widget.task.id),
+        status: 'completed',
+      );
+
+      if (response.success) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('Task marked as complete!'),
+              backgroundColor: Colors.green,
+            ),
+          );
+          Navigator.pop(context, true);
+        }
+      } else {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(response.message),
+              backgroundColor: Colors.red,
+            ),
+          );
+        }
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error: $e'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isUpdating = false;
+        });
+      }
+    }
+  }
+
+  String _formatDateTime(DateTime? dateTime, {bool includeTime = false}) {
+    if (dateTime == null) return '';
+    if (includeTime) {
+      return '${dateTime.day}/${dateTime.month}/${dateTime.year} ${dateTime.hour}:${dateTime.minute.toString().padLeft(2, '0')}';
+    }
+    return '${dateTime.day}/${dateTime.month}/${dateTime.year}';
+  }
+
+  String _getStatusLabel(String status) {
+    switch (status) {
+      case 'pending':
+        return 'Pending';
+      case 'in_progress':
+        return 'In Progress';
+      case 'completed':
+        return 'Completed';
+      case 'failed':
+        return 'Failed';
+      default:
+        return status;
+    }
+  }
+
+  Color _getStatusColor(String status) {
+    switch (status) {
+      case 'pending':
+        return Colors.orange;
+      case 'in_progress':
+        return Colors.blue;
+      case 'completed':
+        return Colors.green;
+      case 'failed':
+        return Colors.red;
+      default:
+        return AppConstants.secondaryColor;
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final task = widget.task;
+    final bool isCompleted = task.status == 'completed';
+    final bool isFailed = task.status == 'failed';
+
     return Scaffold(
       backgroundColor: AppConstants.whiteColor,
       body: SafeArea(
@@ -75,349 +135,31 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             _buildHeader(),
-            if (widget.title != null) _buildTaskDetails(),
-          ],
-        ),
-      ),
-      floatingActionButton: _buildFAB(),
-    );
-  }
-
-  Widget _buildFAB() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(30),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _buildFABButton(
-            icon: Icons.edit,
-            label: 'Edit',
-            onTap: widget.onEdit,
-            color: AppConstants.primaryColor,
-          ),
-          const SizedBox(width: 12),
-          _buildFABButton(
-            icon: Icons.check_circle,
-            label: 'Mark Complete',
-            onTap: widget.onMarkComplete,
-            color: Colors.green,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildFABButton({
-    required IconData icon,
-    required String label,
-    VoidCallback? onTap,
-    required Color color,
-  }) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(20),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, color: color, size: 18),
-            const SizedBox(width: 6),
-            Text(
-              label,
-              style: TextStyle(
-                color: color,
-                fontWeight: FontWeight.w600,
-                fontSize: 14,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTaskDetails() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(AppConstants.paddingMedium),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Row 1: Category Pill
-          if (widget.category != null) _buildCategoryPill(),
-          const SizedBox(height: 16),
-
-          // Row 2: Project Title (small)
-          if (widget.projectName != null) _buildProjectTitle(),
-          const SizedBox(height: 8),
-
-          // Row 3: Task Title (large)
-          if (widget.title != null) _buildTaskTitle(),
-          const SizedBox(height: 16),
-
-          // Row 4: Task Group, Time, Due Date, Shared, Created By
-          _buildTaskMetaInfo(),
-          if (widget.description != null && widget.description!.isNotEmpty)
-            const SizedBox(height: 16),
-
-          // Row 5: Description
-          if (widget.description != null && widget.description!.isNotEmpty)
-            _buildDescription(),
-          if (widget.sharedWithUsers != null &&
-              widget.sharedWithUsers!.isNotEmpty) ...[
-            const SizedBox(height: 16),
-            _buildSharedWithSection(),
-          ],
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSharedWithSection() {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          children: [
-            const Icon(
-              Icons.people,
-              size: 18,
-              color: AppConstants.primaryColor,
-            ),
-            const SizedBox(width: 8),
-            Text(
-              'Shared with',
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-                color: AppConstants.blackColor,
-              ),
-            ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          children: widget.sharedWithUsers!.map((userName) {
-            return Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              decoration: BoxDecoration(
-                color: AppConstants.primaryColor.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(
-                  color: AppConstants.primaryColor.withOpacity(0.3),
+            Expanded(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(AppConstants.paddingMedium),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildStatusBadge(task.status),
+                    const SizedBox(height: 16),
+                    if (task.projectTitle != null) _buildProjectTitle(task.projectTitle!),
+                    const SizedBox(height: 8),
+                    _buildTaskTitle(task.title),
+                    const SizedBox(height: 16),
+                    _buildMetaInfo(task),
+                    if (task.description != null && task.description!.isNotEmpty) ...[
+                      const SizedBox(height: 16),
+                      _buildDescription(task.description!),
+                    ],
+                  ],
                 ),
               ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CircleAvatar(
-                    radius: 12,
-                    backgroundColor: AppConstants.primaryColor,
-                    child: Text(
-                      userName.isNotEmpty ? userName[0].toUpperCase() : '?',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 10,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Text(
-                    userName,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      color: AppConstants.blackColor,
-                      fontWeight: FontWeight.w500,
-                    ),
-                  ),
-                ],
-              ),
-            );
-          }).toList(),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildCategoryPill() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: (widget.categoryColor ?? AppConstants.primaryColor).withOpacity(
-          0.1,
-        ),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(
-          color: (widget.categoryColor ?? AppConstants.primaryColor)
-              .withOpacity(0.3),
-        ),
-      ),
-      child: Text(
-        widget.category!,
-        style: TextStyle(
-          fontSize: 12,
-          fontWeight: FontWeight.w600,
-          color: widget.categoryColor ?? AppConstants.primaryColor,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildProjectTitle() {
-    return Text(
-      widget.projectName ?? '',
-      style: const TextStyle(
-        fontSize: 14,
-        fontWeight: FontWeight.w500,
-        color: AppConstants.secondaryColor,
-      ),
-    );
-  }
-
-  Widget _buildTaskTitle() {
-    return Text(
-      widget.title ?? '',
-      style: const TextStyle(
-        fontSize: 24,
-        fontWeight: FontWeight.bold,
-        color: AppConstants.blackColor,
-      ),
-    );
-  }
-
-  Widget _buildDescription() {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(AppConstants.paddingMedium),
-      decoration: BoxDecoration(
-        color: AppConstants.whiteColor,
-        borderRadius: BorderRadius.circular(AppConstants.radiusSmall),
-        border: Border.all(color: AppConstants.secondaryColor.withOpacity(0.1)),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.1),
-            blurRadius: 10,
-            offset: const Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Text(
-        widget.description ?? 'Here is the description of the task',
-        style: const TextStyle(
-          fontSize: 14,
-          color: AppConstants.secondaryColor,
-          height: 1.5,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildTaskMetaInfo() {
-    final bool isStarted = widget.taskStarted ?? false;
-
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          _buildMetaItem(
-            icon: widget.projectIcon ?? Icons.group,
-            label: widget.taskGroup,
-            iconColor: AppConstants.primaryColor,
-          ),
-          if (!isStarted) ...[
-            // Task not started - show start and end date
-            if (widget.startTime != null) ...[
-              const SizedBox(width: 20),
-              _buildMetaItem(
-                icon: Icons.play_arrow,
-                label: widget.startTime,
-                iconColor: AppConstants.primaryColor,
-              ),
-            ],
-            if (widget.endTime != null) ...[
-              const SizedBox(width: 20),
-              _buildMetaItem(
-                icon: Icons.stop,
-                label: widget.endTime,
-                iconColor: AppConstants.primaryColor,
-              ),
-            ],
-          ] else ...[
-            // Task started - show due date
-            if (widget.dueDate != null) ...[
-              const SizedBox(width: 20),
-              _buildMetaItem(
-                icon: Icons.calendar_today,
-                label: widget.dueDate,
-                iconColor: AppConstants.primaryColor,
-              ),
-            ],
-          ],
-          const SizedBox(width: 20),
-          _buildMetaItem(
-            icon: Icons.people,
-            label: widget.isSharedWithTeam ?? false ? 'Shared' : 'Private',
-            iconColor: AppConstants.primaryColor,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildMetaRow({required List<Widget> children}) {
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: children.map((child) {
-          final index = children.indexOf(child);
-          return Row(
-            children: [
-              child,
-              if (index < children.length - 1) const SizedBox(width: 20),
-            ],
-          );
-        }).toList(),
-      ),
-    );
-  }
-
-  Widget _buildMetaItem({
-    required IconData icon,
-    String? label,
-    required Color iconColor,
-  }) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Icon(icon, size: 18, color: iconColor),
-        if (label != null) ...[
-          const SizedBox(width: 6),
-          Text(
-            label,
-            style: const TextStyle(
-              fontSize: 13,
-              color: AppConstants.secondaryColor,
             ),
-          ),
-        ],
-      ],
+          ],
+        ),
+      ),
+      floatingActionButton: (!isCompleted && !isFailed) ? _buildFAB() : null,
     );
   }
 
@@ -444,7 +186,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
             ),
           ),
           const Text(
-            "Task Management",
+            "Task Details",
             style: TextStyle(
               fontSize: 20,
               fontWeight: FontWeight.bold,
@@ -486,6 +228,218 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
             ],
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildStatusBadge(String status) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: _getStatusColor(status).withOpacity(0.1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: _getStatusColor(status).withOpacity(0.3),
+        ),
+      ),
+      child: Text(
+        _getStatusLabel(status),
+        style: TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: _getStatusColor(status),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProjectTitle(String projectName) {
+    return Text(
+      projectName,
+      style: const TextStyle(
+        fontSize: 14,
+        fontWeight: FontWeight.w500,
+        color: AppConstants.secondaryColor,
+      ),
+    );
+  }
+
+  Widget _buildTaskTitle(String title) {
+    return Text(
+      title,
+      style: const TextStyle(
+        fontSize: 24,
+        fontWeight: FontWeight.bold,
+        color: AppConstants.blackColor,
+      ),
+    );
+  }
+
+  Widget _buildMetaInfo(Task task) {
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          _buildMetaItem(
+            icon: Icons.calendar_today,
+            label: 'Started',
+            value: _formatDateTime(task.startedAt),
+          ),
+          const SizedBox(width: 20),
+          _buildMetaItem(
+            icon: Icons.event,
+            label: 'Ends',
+            value: _formatDateTime(task.endedAt),
+          ),
+          const SizedBox(width: 20),
+          _buildMetaItem(
+            icon: Icons.access_time,
+            label: 'Created',
+            value: _formatDateTime(task.createdAt),
+          ),
+          if (task.completedAt != null) ...[
+            const SizedBox(width: 20),
+            _buildMetaItem(
+              icon: Icons.check_circle,
+              label: 'Completed',
+              value: _formatDateTime(task.completedAt),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMetaItem({
+    required IconData icon,
+    required String label,
+    required String value,
+  }) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Icon(icon, size: 18, color: AppConstants.primaryColor),
+        const SizedBox(width: 6),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: const TextStyle(
+                fontSize: 11,
+                color: AppConstants.secondaryColor,
+              ),
+            ),
+            Text(
+              value,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+                color: AppConstants.blackColor,
+              ),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildDescription(String description) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(AppConstants.paddingMedium),
+      decoration: BoxDecoration(
+        color: AppConstants.primaryColor.withOpacity(0.05),
+        borderRadius: BorderRadius.circular(AppConstants.radiusSmall),
+        border: Border.all(color: AppConstants.primaryColor.withOpacity(0.1)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text(
+            'Description',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: AppConstants.primaryColor,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            description,
+            style: const TextStyle(
+              fontSize: 14,
+              color: AppConstants.secondaryColor,
+              height: 1.5,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFAB() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(30),
+        boxShadow: [
+          BoxShadow(
+            color: Colors.black.withOpacity(0.1),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _buildFABButton(
+            icon: Icons.check_circle,
+            label: _isUpdating ? 'Updating...' : 'Mark Complete',
+            onTap: _isUpdating ? null : _markComplete,
+            color: Colors.green,
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFABButton({
+    required IconData icon,
+    required String label,
+    VoidCallback? onTap,
+    required Color color,
+  }) {
+    final isDisabled = onTap == null;
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        decoration: BoxDecoration(
+          color: isDisabled ? color.withOpacity(0.3) : color.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              color: isDisabled ? Colors.white : color,
+              size: 18,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              label,
+              style: TextStyle(
+                color: isDisabled ? Colors.white : color,
+                fontWeight: FontWeight.w600,
+                fontSize: 14,
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

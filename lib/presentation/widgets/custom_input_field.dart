@@ -9,6 +9,10 @@ class CustomInputField extends StatelessWidget {
   final int? minLines;
   final TextInputType? keyboardType;
   final bool enabled;
+  final bool obscureText;
+  final IconData? prefixIcon;
+  final Widget? suffixIcon;
+  final String? Function(String?)? validator;
 
   const CustomInputField({
     super.key,
@@ -19,6 +23,10 @@ class CustomInputField extends StatelessWidget {
     this.minLines,
     this.keyboardType,
     this.enabled = true,
+    this.obscureText = false,
+    this.prefixIcon,
+    this.suffixIcon,
+    this.validator,
   });
 
   @override
@@ -62,6 +70,7 @@ class CustomInputField extends StatelessWidget {
               minLines: minLines,
               keyboardType: keyboardType,
               enabled: enabled,
+              obscureText: obscureText,
               style: TextStyle(
                 fontSize: 14,
                 color: AppConstants.blackColor,
@@ -81,7 +90,10 @@ class CustomInputField extends StatelessWidget {
                   color: AppConstants.secondaryColor.withOpacity(0.5),
                   fontSize: 14,
                 ),
-
+                prefixIcon: prefixIcon != null
+                    ? Icon(prefixIcon, color: AppConstants.primaryColor, size: 20)
+                    : null,
+                suffixIcon: suffixIcon,
                 contentPadding: EdgeInsets.symmetric(
                   horizontal: 0,
                   vertical: isMultiline ? 0 : 0,
